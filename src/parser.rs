@@ -2,24 +2,20 @@ use std::{collections::VecDeque, iter::Peekable, slice::Iter, vec::IntoIter};
 
 use crate::lexer::{Keyword, LexerLiteral, LexerToken, LexerType, Symbol};
 
-// TODO: Replace Vec<> with Option<Vec<>
-
 type Identifier = String;
 type CodeBlock = Vec<Statement>;
 type Parameter = (ASTType, Identifier);
-type FunctionCall = (Identifier, Vec<Expression>);
+type FunctionCall = (Identifier, Option<Vec<Expression>>);
 
 #[derive(Debug)]
 pub enum TopLevel {
-    Function(ASTType, Identifier, Vec<Parameter>, CodeBlock),
-    VariableDeclaration(ASTType, Identifier),
-    VariableDefinition(ASTType, Identifier, Expression),
+    Function(ASTType, Identifier, Option<Vec<Parameter>>, CodeBlock),
+    VariableDefinition(ASTType, Identifier, Option<Expression>),
 }
 
 #[derive(Debug)]
 pub enum Statement {
-    FunctionCall(Identifier, Vec<Expression>),
-    VariableDeclaration(ASTType, Identifier),
+    FunctionCall(Identifier, Option<Vec<Expression>>),
     VariableAssignment(VariableAssignment),
     Conditional(Conditional),
     CodeBlock(CodeBlock),
@@ -30,8 +26,8 @@ pub enum Statement {
 
 #[derive(Debug)]
 pub enum VariableAssignment {
-    VariableDefinition(ASTType, Identifier, Expression),
-    VariableAssignment(Identifier, Expression),
+    Definition(ASTType, Identifier, Option<Expression>),
+    Assignment(Identifier, Expression),
 }
 
 #[derive(Debug)]
@@ -52,7 +48,7 @@ pub enum Expression {
     Binary(Box<Expression>, BinaryOperator, Box<Expression>),
     Literal(ASTLiteral),
     Variable(Identifier),
-    FunctionCall(Identifier, Vec<Expression>),
+    FunctionCall(Identifier, Option<Vec<Expression>>),
     Grouping(Box<Expression>),
 }
 
@@ -221,7 +217,7 @@ fn parse_function_definition(
             Ok(TopLevel::Function(
                 return_type,
                 function_name,
-                Vec::new(),
+                None,
                 parse_code_block(iterator)?,
             ))
         }
@@ -318,7 +314,7 @@ fn parse_identifier(
         LexerToken::Symbol(Symbol::Equal) => {
             let expression = parse_expression(iterator, 0)?;
             Ok(Statement::VariableAssignment(
-                VariableAssignment::VariableAssignment(identifier, expression),
+                VariableAssignment::Assignment(identifier, expression),
             ))
         }
         token => Err(format!(
@@ -374,14 +370,14 @@ fn parse_variable_definition_declaration(
         .peek()
         .ok_or("Expected semicolon or equal sign".to_string())?
     {
-        LexerToken::Symbol(Symbol::Semicolon) => {
-            Ok(Statement::VariableDeclaration(variable_type, variable_name))
-        }
+        LexerToken::Symbol(Symbol::Semicolon) => Ok(Statement::VariableAssignment(
+            VariableAssignment::Definition(variable_type, variable_name, None),
+        )),
         LexerToken::Symbol(Symbol::Equal) => {
             iterator.next();
             let expression = parse_expression(iterator, 0)?;
             Ok(Statement::VariableAssignment(
-                VariableAssignment::VariableDefinition(variable_type, variable_name, expression),
+                VariableAssignment::Definition(variable_type, variable_name, Some(expression)),
             ))
         }
         token => Err(format!(
@@ -466,14 +462,20 @@ fn parse_variable_definition_declaration(
 
 fn parse_function_call_arguements(
     iterator: &mut ParserIterator,
-) -> Result<Vec<Expression>, String> {
+) -> Result<Option<Vec<Expression>>, String> {
+    let token = iterator.peek().ok_or("Missing token".to_string())?;
+    if expect_symbol(token, Symbol::RBracket) {
+        iterator.next();
+        return Ok(None);
+    }
+
     let mut arguements: Vec<Expression> = Vec::new();
 
     loop {
         let token = iterator.peek().ok_or("Missing token".to_string())?;
         if expect_symbol(token, Symbol::RBracket) {
             iterator.next();
-            return Ok(arguements);
+            return Ok(Some(arguements));
         }
 
         arguements.push(parse_expression(iterator, 0)?);
