@@ -4,7 +4,7 @@ use std::{
     iter::Peekable,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum LexerToken {
     Identifier(String),
     Symbol(Symbol),
@@ -50,7 +50,7 @@ pub enum Symbol {
     Decrement,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum LexerLiteral {
     Int(i32),
     Float(f32),
@@ -59,7 +59,7 @@ pub enum LexerLiteral {
     Bool(bool),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Keyword {
     If,
     Else,
@@ -71,7 +71,7 @@ pub enum Keyword {
     Type(LexerType),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum LexerType {
     Null,
     Void,

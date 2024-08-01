@@ -207,7 +207,7 @@ fn parse_function_definition(
     };
 
     let token = iterator.next().ok_or("Missing token".to_string())?;
-    if !expect_symbol(token, Symbol::LBracket) {
+    if token != LexerToken::Symbol(Symbol::LBracket) {
         return Err("Expected LBracket".to_string());
     }
 
@@ -257,14 +257,14 @@ fn parse_function_definition(
 //
 fn parse_code_block(iterator: &mut ParserIterator) -> Result<CodeBlock, String> {
     let token = iterator.next().ok_or("Missing token".to_string())?;
-    if !expect_symbol(token, Symbol::LBrace) {
+    if token != LexerToken::Symbol(Symbol::LBrace) {
         return Err("Invalid Code Block".to_string());
     }
 
     let mut statements: CodeBlock = Vec::new();
     loop {
         let token = iterator.peek().ok_or("Missing token".to_string())?;
-        if expect_symbol(token, Symbol::RBrace) {
+        if token == LexerToken::Symbol(Symbol::RBrace) {
             iterator.next();
             return Ok(statements);
         }
@@ -325,19 +325,24 @@ fn parse_identifier(
 }
 
 fn parse_keyword(iterator: &mut ParserIterator, keyword: Keyword) -> Result<Statement, String> {
-    if let Ok(statement) = parse_variable_definition_declaration(iterator, keyword) {
+    if let Ok(statement) = parse_variable_definition_declaration(iterator, keyword.clone()) {
         return Ok(statement);
     }
 
-    todo!("Conditional parsing");
-    // match keyword {
-    //     Keyword::If => Ok(Statement::Conditional(Conditional::IfStatement(
-    //         parse_if_statement(iterator)?,
-    //     ))),
-    //     Keyword::For => Ok(Statement::Conditional(parse_for_loop(iterator)?)),
-    //     Keyword::While => Ok(Statement::Conditional(parse_while_loop(iterator)?)),
-    //     _ => Err(format!("Invalid keyword here {:?}", keyword)),
-    // }
+    match keyword {
+        Keyword::If => Ok(Statement::Conditional(Conditional::IfStatement(
+            parse_if_statement(iterator)?,
+        ))),
+        Keyword::For => todo!("for loop"), // Ok(Statement::Conditional(parse_for_loop(iterator)?)),
+        Keyword::While => {
+            iterator.next();
+            Ok(Statement::Conditional(Conditional::WhileLoop(
+                Some(parse_grouping(iterator)?),
+                parse_code_block(iterator)?,
+            )))
+        }
+        _ => Err(format!("Invalid keyword here {:?}", keyword)),
+    }
 }
 
 fn parse_variable_definition_declaration(
@@ -387,44 +392,46 @@ fn parse_variable_definition_declaration(
     }
 }
 
-// fn parse_if_statement(iterator: &mut ParserIterator) -> Result<IfStatement, String> {
-//     iterator.read_next();
-//     let condition = parse_grouping(iterator)?;
-//     let code_block = parse_code_block(iterator)?;
-//
-//     match iterator.peek() {
-//         Some(LexerToken::Keyword(Keywords::Else)) => {
-//             let else_section = parse_else_statement(iterator)?;
-//             Ok(IfStatement::If(
-//                 condition,
-//                 Box::new(IfStatement::CodeBlock(code_block, Box::new(else_section))),
-//             ))
-//         }
-//         _ => Ok(IfStatement::If(
-//             condition,
-//             Box::new(IfStatement::CodeBlock(
-//                 code_block,
-//                 Box::new(IfStatement::None),
-//             )),
-//         )),
-//     }
-// }
-//
-// fn parse_else_statement(iterator: &mut ParserIterator) -> Result<IfStatement, String> {
-//     iterator.read_next();
-//     match iterator.next() {
-//         Some(LexerToken::Symbol(Symbols::LBrace)) => {
-//             let else_code_block = parse_code_block(iterator)?;
-//             Ok(IfStatement::CodeBlock(
-//                 else_code_block,
-//                 Box::new(IfStatement::None),
-//             ))
-//         }
-//         Some(LexerToken::Keyword(Keywords::If)) => Ok(parse_if_statement(iterator)?),
-//         _ => Err("Invalid variable declaration".to_string()),
-//     }
-// }
-//
+fn parse_if_statement(
+    iterator: &mut ParserIterator,
+) -> Result<Vec<(Expression, CodeBlock)>, String> {
+    iterator.next();
+    let mut if_statement: Vec<(Expression, CodeBlock)> = Vec::new();
+
+    let token = iterator.peek().ok_or("Missing token".to_string())?;
+    if token != LexerToken::Symbol(Symbol::LBracket) {
+        return Err(format!("Expected '(', found {:?}", token));
+    }
+
+    let condition = parse_grouping(iterator)?;
+    let code_block = parse_code_block(iterator)?;
+
+    if_statement.push((condition, code_block));
+
+    loop {
+        let token = iterator.peek().ok_or("Missing token".to_string())?;
+        if token != LexerToken::Keyword(Keyword::Else) {
+            return Ok(if_statement);
+        }
+        iterator.next();
+
+        let token = iterator.next().ok_or("Missing token".to_string())?;
+        if token != LexerToken::Keyword(Keyword::If) {
+            return Err(format!("Expected 'if', found {:?}", token));
+        }
+
+        let token = iterator.peek().ok_or("Missing token".to_string())?;
+        if token != LexerToken::Symbol(Symbol::LBracket) {
+            return Err(format!("Expected '(', found {:?}", token));
+        }
+
+        let condition = parse_grouping(iterator)?;
+        let code_block = parse_code_block(iterator)?;
+
+        if_statement.push((condition, code_block));
+    }
+}
+
 // fn parse_for_loop(iterator: &mut ParserIterator) -> Result<Conditional, String> {
 //     iterator.read_next();
 //     if !expect_symbol(iterator, Symbols::LBracket) {
@@ -451,20 +458,12 @@ fn parse_variable_definition_declaration(
 //         code_block,
 //     ))
 // }
-//
-// fn parse_while_loop(iterator: &mut ParserIterator) -> Result<Conditional, String> {
-//     iterator.read_next();
-//     let condition = parse_grouping(iterator)?;
-//     let code_block = parse_code_block(iterator)?;
-//     Ok(Conditional::WhileLoop(condition, code_block))
-// }
-//
 
 fn parse_function_call_arguements(
     iterator: &mut ParserIterator,
 ) -> Result<Option<Vec<Expression>>, String> {
     let token = iterator.peek().ok_or("Missing token".to_string())?;
-    if expect_symbol(token, Symbol::RBracket) {
+    if token == LexerToken::Symbol(Symbol::RBracket) {
         iterator.next();
         return Ok(None);
     }
@@ -473,7 +472,7 @@ fn parse_function_call_arguements(
 
     loop {
         let token = iterator.peek().ok_or("Missing token".to_string())?;
-        if expect_symbol(token, Symbol::RBracket) {
+        if token == LexerToken::Symbol(Symbol::RBracket) {
             iterator.next();
             return Ok(Some(arguements));
         }
@@ -614,7 +613,7 @@ fn parse_expression_identifier(iterator: &mut ParserIterator) -> Result<Expressi
                 .next()
                 .ok_or("Missing token at start of top level element".to_string())?;
 
-            if expect_symbol(token, Symbol::LBracket) {
+            if token == LexerToken::Symbol(Symbol::LBracket) {
                 Ok(Expression::FunctionCall(
                     identifier,
                     parse_function_call_arguements(iterator)?,
@@ -624,14 +623,6 @@ fn parse_expression_identifier(iterator: &mut ParserIterator) -> Result<Expressi
             }
         }
         token => Err(format!("Invalid expression identifier, found {:?}", token)),
-    }
-}
-
-fn expect_symbol(token: LexerToken, symbol: Symbol) -> bool {
-    if let LexerToken::Symbol(token) = token {
-        token == symbol
-    } else {
-        false
     }
 }
 

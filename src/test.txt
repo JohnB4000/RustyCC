@@ -1,3 +1,6 @@
+int hello() {
+	printf("Hello World!");
+}
 
 void main() {
 	printf(1);
@@ -6,6 +9,17 @@ void main() {
 
 	y = x;
 	x = 12 + 2 * 4;
+
+	if (x) {
+		bool p = true;
+		printf(p);
+	} else if (y) {
+		char a = 'a';
+	}
+
+	while (x) {
+		x = 2;
+	}
 }
 
 /* 
