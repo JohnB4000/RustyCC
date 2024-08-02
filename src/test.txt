@@ -1,8 +1,8 @@
-int hello() {
+int hello(int x, void y) {
 	printf("Hello World!");
 }
 
-void main() {
+void main(int argc, char argv) {
 	printf(1);
 	int x = 2;
 	int y;
@@ -27,26 +27,5 @@ void main() {
 
 	for (;x < 10;) {
 		printf("Test");
-	}
-}
-
-void hello() {
-	printf("Say Hello");
-}
-
-int main() {
-	printf("Hello World");
-	printf(1 + 3 * 4);
-	char hello_world2 = 'C';
-	hello();
-
-	if (x == 2) {
-		printf("Hello");
-	} else if (x >= 3) {
-		printf("Bye");
-	}
-
-	for (int y = 0; y < 10; y = y + 1) {
-		printf(y);
 	}
 }

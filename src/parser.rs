@@ -92,6 +92,9 @@ pub enum ASTType {
     Float,
     Char,
     Void,
+    Double,
+    Long,
+    Short,
 }
 
 struct ParserIterator {
@@ -211,50 +214,55 @@ fn parse_function_definition(
         return Err("Expected LBracket".to_string());
     }
 
-    match iterator.peek() {
-        Some(LexerToken::Symbol(Symbol::RBracket)) => {
-            iterator.next();
-            Ok(TopLevel::Function(
+    let token = iterator.peek().ok_or("Missing token".to_string())?;
+    if token == LexerToken::Symbol(Symbol::RBracket) {
+        iterator.next();
+        return Ok(TopLevel::Function(
+            return_type,
+            function_name,
+            None,
+            parse_code_block(iterator)?,
+        ));
+    }
+
+    let mut parameters: Vec<Parameter> = Vec::new();
+    loop {
+        let token = iterator.next().ok_or("Missing token".to_string())?;
+        let parameter_type = match token {
+            LexerToken::Keyword(Keyword::Type(LexerType::Int)) => ASTType::Int,
+            LexerToken::Keyword(Keyword::Type(LexerType::Float)) => ASTType::Float,
+            LexerToken::Keyword(Keyword::Type(LexerType::Bool)) => ASTType::Bool,
+            LexerToken::Keyword(Keyword::Type(LexerType::Char)) => ASTType::Char,
+            LexerToken::Keyword(Keyword::Type(LexerType::Void)) => ASTType::Void,
+            LexerToken::Keyword(Keyword::Type(LexerType::Double)) => ASTType::Double,
+            LexerToken::Keyword(Keyword::Type(LexerType::Long)) => ASTType::Long,
+            LexerToken::Keyword(Keyword::Type(LexerType::Short)) => ASTType::Short,
+            _ => return Err(format!("Expect type found '{:?}'", token)),
+        };
+
+        let token = iterator.next().ok_or("Missing token".to_string())?;
+        let identifier = if let LexerToken::Identifier(identifier) = token {
+            identifier
+        } else {
+            return Err(format!("Expected identifier found '{:?}", token));
+        };
+
+        parameters.push((parameter_type, identifier));
+
+        let token = iterator.next().ok_or("Missing token".to_string())?;
+        if token == LexerToken::Symbol(Symbol::RBracket) {
+            return Ok(TopLevel::Function(
                 return_type,
                 function_name,
-                None,
+                Some(parameters),
                 parse_code_block(iterator)?,
-            ))
-        }
-        _ => {
-            todo!("Implement argement parsing")
-            // let parameter = parse_parameter(iterator)?;
-            // iterator.read_next();
-            // if !expect_symbol(iterator, Symbols::RBracket) {
-            //     return Err("Expected RBracket".to_string());
-            // }
-            // iterator.read_next();
-            // Ok(TopLevel::Function(
-            //     return_type,
-            //     function_name,
-            //     Some(parameter),
-            //     parse_code_block(iterator)?,
-            // ))
+            ));
+        } else if token != LexerToken::Symbol(Symbol::Comma) {
+            return Err(format!("Expected ',' found '{:?}'", token));
         }
     }
 }
 
-// fn parse_parameter(iterator: &mut ParserIterator) -> Result<Parameter, String> {
-//     let parameter_type = match iterator.current() {
-//         Some(LexerToken::Keyword(Keywords::Type(Types::Int))) => Type::Int,
-//         Some(LexerToken::Keyword(Keywords::Type(Types::Float))) => Type::Float,
-//         Some(LexerToken::Keyword(Keywords::Type(Types::Bool))) => Type::Bool,
-//         _ => return Err("Invalid parameter type".to_string()),
-//     };
-//
-//     let parameter_name = match iterator.next() {
-//         Some(LexerToken::Identifier(identifier)) => identifier.to_string(),
-//         _ => return Err("Invalid parameter name".to_string()),
-//     };
-//
-//     Ok(Parameter::Parameter(parameter_type, parameter_name))
-// }
-//
 fn parse_code_block(iterator: &mut ParserIterator) -> Result<CodeBlock, String> {
     let token = iterator.next().ok_or("Missing token".to_string())?;
     if token != LexerToken::Symbol(Symbol::LBrace) {
@@ -479,25 +487,12 @@ fn parse_for_loop(iterator: &mut ParserIterator) -> Result<Conditional, String> 
 
     let code_block = parse_code_block(iterator)?;
 
-    println!("Done");
     Ok(Conditional::ForLoop(
         initial_statement,
         exit_condition,
         continuous_expression,
         code_block,
     ))
-    //
-    // iterator.read_next();
-    // let continuous_expression = parse_variable_assignment(iterator, variable_name)?;
-    // iterator.read_next();
-    // println!("{:?}", iterator.current());
-    // let code_block = parse_code_block(iterator)?;
-    // Ok(Conditional::ForLoop(
-    //     Box::new(initial_statement),
-    //     exit_condition,
-    //     Box::new(continuous_expression),
-    //     code_block,
-    // ))
 }
 
 fn parse_function_call_arguements(
@@ -592,15 +587,16 @@ fn convert_to_ast_token(operator: &LexerToken) -> Result<BinaryOperator, String>
 fn parse_primary_expression(iterator: &mut ParserIterator) -> Result<Expression, String> {
     if let Ok(expression) = parse_literal(iterator) {
         iterator.next();
-        return Ok(Expression::Literal(expression));
+        Ok(Expression::Literal(expression))
     } else if let Ok(expression) = parse_unary_expresssion(iterator) {
-        return Ok(expression);
+        Ok(expression)
     } else if let Ok(expression) = parse_expression_identifier(iterator) {
-        return Ok(expression);
+        Ok(expression)
     } else if let Ok(expression) = parse_grouping(iterator) {
-        return Ok(expression);
+        Ok(expression)
+    } else {
+        Err("Invalid primary expression".to_string())
     }
-    Err("Invalid primary expression".to_string())
 }
 
 fn parse_literal(iterator: &mut ParserIterator) -> Result<ASTLiteral, String> {
@@ -640,7 +636,7 @@ fn parse_unary_expresssion(iterator: &mut ParserIterator) -> Result<Expression, 
                 Box::new(parse_primary_expression(iterator)?),
             ))
         }
-        token => Err(format!("Invalid unary expression, found {:?}", token)),
+        token => Err(format!("Expected unary expression, found '{:?}'", token)),
     }
 }
 
