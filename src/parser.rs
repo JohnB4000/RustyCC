@@ -333,7 +333,7 @@ fn parse_keyword(iterator: &mut ParserIterator, keyword: Keyword) -> Result<Stat
         Keyword::If => Ok(Statement::Conditional(Conditional::IfStatement(
             parse_if_statement(iterator)?,
         ))),
-        Keyword::For => todo!("for loop"), // Ok(Statement::Conditional(parse_for_loop(iterator)?)),
+        Keyword::For => Ok(Statement::Conditional(parse_for_loop(iterator)?)),
         Keyword::While => {
             iterator.next();
             Ok(Statement::Conditional(Conditional::WhileLoop(
@@ -432,32 +432,73 @@ fn parse_if_statement(
     }
 }
 
-// fn parse_for_loop(iterator: &mut ParserIterator) -> Result<Conditional, String> {
-//     iterator.read_next();
-//     if !expect_symbol(iterator, Symbols::LBracket) {
-//         return Err("Missing left bracket".to_string());
-//     }
-//     iterator.read_next();
-//     let initial_statement = parse_statement(iterator)?;
-//     iterator.read_next();
-//     let exit_condition = parse_expression(iterator, 0)?;
-//     let variable_name = match iterator.next() {
-//         Some(LexerToken::Identifier(variable_name)) => variable_name,
-//         None => todo!(),
-//         _ => return Err("Invalid for loop".to_string()),
-//     };
-//     iterator.read_next();
-//     let continuous_expression = parse_variable_assignment(iterator, variable_name)?;
-//     iterator.read_next();
-//     println!("{:?}", iterator.current());
-//     let code_block = parse_code_block(iterator)?;
-//     Ok(Conditional::ForLoop(
-//         Box::new(initial_statement),
-//         exit_condition,
-//         Box::new(continuous_expression),
-//         code_block,
-//     ))
-// }
+fn parse_for_loop(iterator: &mut ParserIterator) -> Result<Conditional, String> {
+    iterator.next();
+    let token = iterator.next().ok_or("Missing token".to_string())?;
+    if token != LexerToken::Symbol(Symbol::LBracket) {
+        return Err(format!("Expected '(' found {:?}", token));
+    }
+
+    let token = iterator.peek().ok_or("Missing token".to_string())?;
+    let initial_statement = if token == LexerToken::Symbol(Symbol::Semicolon) {
+        iterator.next();
+        None
+    } else {
+        if let Statement::VariableAssignment(initial_statement) = parse_statement(iterator)? {
+            Some(initial_statement)
+        } else {
+            return Err("Expected variable definition or assignment".to_string());
+        }
+    };
+
+    let token = iterator.peek().ok_or("Missing token".to_string())?;
+    let exit_condition = if token == LexerToken::Symbol(Symbol::Semicolon) {
+        None
+    } else {
+        Some(parse_expression(iterator, 0)?)
+    };
+
+    iterator.next();
+
+    let token = iterator.peek().ok_or("Missing token".to_string())?;
+    let continuous_expression = if token == LexerToken::Symbol(Symbol::RBracket) {
+        None
+    } else {
+        let identifier = match iterator.next() {
+            Some(LexerToken::Identifier(identifier)) => identifier,
+            token => return Err(format!("Expected identifier found {:?}", token)),
+        };
+        iterator.next();
+
+        Some(VariableAssignment::Assignment(
+            identifier,
+            parse_expression(iterator, 0)?,
+        ))
+    };
+    iterator.next();
+
+    let code_block = parse_code_block(iterator)?;
+
+    println!("Done");
+    Ok(Conditional::ForLoop(
+        initial_statement,
+        exit_condition,
+        continuous_expression,
+        code_block,
+    ))
+    //
+    // iterator.read_next();
+    // let continuous_expression = parse_variable_assignment(iterator, variable_name)?;
+    // iterator.read_next();
+    // println!("{:?}", iterator.current());
+    // let code_block = parse_code_block(iterator)?;
+    // Ok(Conditional::ForLoop(
+    //     Box::new(initial_statement),
+    //     exit_condition,
+    //     Box::new(continuous_expression),
+    //     code_block,
+    // ))
+}
 
 fn parse_function_call_arguements(
     iterator: &mut ParserIterator,

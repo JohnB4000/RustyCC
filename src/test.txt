@@ -20,9 +20,16 @@ void main() {
 	while (x) {
 		x = 2;
 	}
+
+	for (int x = 2; x < 10; x = x + 1) {
+		printf("Test");
+	}
+
+	for (;x < 10;) {
+		printf("Test");
+	}
 }
 
-/* 
 void hello() {
 	printf("Say Hello");
 }
@@ -39,9 +46,7 @@ int main() {
 		printf("Bye");
 	}
 
-	for (int y = 0; y < 10; y++) {
+	for (int y = 0; y < 10; y = y + 1) {
 		printf(y);
 	}
 }
-
-*/
