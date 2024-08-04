@@ -6,7 +6,6 @@ use std::{
 };
 
 mod lexer;
-#[allow(unused)]
 mod parser;
 
 fn main() {

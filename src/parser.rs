@@ -1,11 +1,10 @@
-use std::{collections::VecDeque, iter::Peekable, slice::Iter, vec::IntoIter};
+use std::{iter::Peekable, vec::IntoIter};
 
 use crate::lexer::{Keyword, LexerLiteral, LexerToken, LexerType, Symbol};
 
 type Identifier = String;
 type CodeBlock = Vec<Statement>;
 type Parameter = (ASTType, Identifier);
-type FunctionCall = (Identifier, Option<Vec<Expression>>);
 
 #[derive(Debug)]
 pub enum TopLevel {
@@ -24,6 +23,7 @@ pub enum Statement {
     Continue,
 }
 
+// Could merge with main enum
 #[derive(Debug)]
 pub enum VariableAssignment {
     Definition(ASTType, Identifier, Option<Expression>),
@@ -99,38 +99,15 @@ pub enum ASTType {
 
 struct ParserIterator {
     iter: Peekable<IntoIter<LexerToken>>,
-    buffer: VecDeque<LexerToken>,
 }
 
 impl ParserIterator {
     fn new(tokens: Peekable<IntoIter<LexerToken>>) -> Self {
-        ParserIterator {
-            iter: tokens,
-            buffer: VecDeque::new(),
-        }
-    }
-
-    fn next(&mut self) -> Option<LexerToken> {
-        if self.buffer.len() > 0 {
-            return self.buffer.pop_front();
-        }
-        self.iter.next()
+        ParserIterator { iter: tokens }
     }
 
     fn peek(&mut self) -> Option<LexerToken> {
-        self.peek_n(0)
-    }
-
-    fn peek_n(&mut self, n: usize) -> Option<LexerToken> {
-        while self.buffer.len() <= n {
-            if let Some(item) = self.iter.next() {
-                self.buffer.push_back(item);
-            } else {
-                break;
-            }
-        }
-
-        Some(self.buffer.get(n)?.clone())
+        self.iter.peek().cloned()
     }
 }
 
@@ -138,9 +115,6 @@ impl Iterator for ParserIterator {
     type Item = LexerToken;
 
     fn next(&mut self) -> Option<LexerToken> {
-        if self.buffer.len() > 0 {
-            return self.buffer.pop_front();
-        }
         self.iter.next()
     }
 }
@@ -157,7 +131,8 @@ fn parse_top_level(iterator: &mut ParserIterator) -> Result<Vec<TopLevel>, Strin
         if let Some(LexerToken::EOF) = iterator.peek() {
             break Ok(top_level);
         }
-        top_level.push(parse_top_level_element(iterator)?)
+        let x = parse_top_level_element(iterator)?;
+        top_level.push(x);
     }
 }
 
@@ -166,46 +141,75 @@ fn parse_top_level_element(iterator: &mut ParserIterator) -> Result<TopLevel, St
         .next()
         .ok_or("Missing token at start of top level element".to_string())?;
 
-    if let LexerToken::Keyword(Keyword::Type(
-        LexerType::Void
-        | LexerType::Int
-        | LexerType::Float
-        | LexerType::Bool
-        | LexerType::Char
-        | LexerType::Short
-        | LexerType::Long
-        | LexerType::Double,
-    )) = token
-    {
-        let identifier = if let Some(LexerToken::Identifier(identifier)) = iterator.next() {
-            identifier
-        } else {
-            return Err("Invalid top level element".to_string());
-        };
+    let keyword = match token {
+        LexerToken::Keyword(keyword) => keyword,
+        _ => return Err(format!("Expected keyword found '{:?}'", token)),
+    };
 
-        if let Some(LexerToken::Symbol(Symbol::LBracket)) = iterator.peek() {
-            parse_function_definition(iterator, token, identifier)
-        } else {
-            return Err(format!(
-                "Missing '(' after {} in function definition",
-                identifier
-            ));
+    let ast_type = match keyword {
+        Keyword::Type(LexerType::Int) => ASTType::Int,
+        Keyword::Type(LexerType::Float) => ASTType::Float,
+        Keyword::Type(LexerType::Bool) => ASTType::Bool,
+        Keyword::Type(LexerType::Char) => ASTType::Char,
+        Keyword::Type(LexerType::Void) => ASTType::Void,
+        Keyword::Type(LexerType::Double) => ASTType::Double,
+        Keyword::Type(LexerType::Long) => ASTType::Long,
+        Keyword::Type(LexerType::Short) => ASTType::Short,
+        _ => return Err(format!("Invalid return type '{:?}'", keyword)),
+    };
+
+    let token = iterator.next().ok_or("Missing identifier".to_string())?;
+    let identifier = match token {
+        LexerToken::Identifier(identifier) => identifier,
+        _ => return Err(format!("Expected identifier found '{:?}'", token)),
+    };
+
+    let token = iterator.peek().ok_or("Missing identifier".to_string())?;
+    match token {
+        LexerToken::Symbol(Symbol::Semicolon) => match iterator.peek() {
+            Some(LexerToken::Symbol(Symbol::Semicolon)) => {
+                iterator.next();
+                Ok(TopLevel::VariableDefinition(ast_type, identifier, None))
+            }
+            token => Err(format!("Expected semicolon, found {:?}", token).to_string()),
+        },
+        LexerToken::Symbol(Symbol::Equal) => {
+            iterator.next();
+            let expression = parse_expression(iterator, 0)?;
+
+            match iterator.peek() {
+                Some(LexerToken::Symbol(Symbol::Semicolon)) => {
+                    iterator.next();
+                    Ok(TopLevel::VariableDefinition(
+                        ast_type,
+                        identifier,
+                        Some(expression),
+                    ))
+                }
+                token => Err(format!("Expected semicolon, found {:?}", token).to_string()),
+            }
         }
-    } else {
-        return Err(format!("Unrecognised token at top level '{:?}'", token));
+        LexerToken::Symbol(Symbol::LBracket) => {
+            parse_function_definition(iterator, keyword, identifier)
+        }
+        _ => Err(format!("Invalid top level element found {:?}", token)),
     }
 }
 
 fn parse_function_definition(
     iterator: &mut ParserIterator,
-    return_type: LexerToken,
+    return_type: Keyword,
     function_name: String,
 ) -> Result<TopLevel, String> {
     let return_type = match return_type {
-        LexerToken::Keyword(Keyword::Type(LexerType::Int)) => ASTType::Int,
-        LexerToken::Keyword(Keyword::Type(LexerType::Float)) => ASTType::Float,
-        LexerToken::Keyword(Keyword::Type(LexerType::Bool)) => ASTType::Bool,
-        LexerToken::Keyword(Keyword::Type(LexerType::Void)) => ASTType::Void,
+        Keyword::Type(LexerType::Int) => ASTType::Int,
+        Keyword::Type(LexerType::Float) => ASTType::Float,
+        Keyword::Type(LexerType::Bool) => ASTType::Bool,
+        Keyword::Type(LexerType::Char) => ASTType::Char,
+        Keyword::Type(LexerType::Void) => ASTType::Void,
+        Keyword::Type(LexerType::Double) => ASTType::Double,
+        Keyword::Type(LexerType::Long) => ASTType::Long,
+        Keyword::Type(LexerType::Short) => ASTType::Short,
         _ => return Err(format!("Invalid return type '{:?}'", return_type)),
     };
 
@@ -277,13 +281,11 @@ fn parse_code_block(iterator: &mut ParserIterator) -> Result<CodeBlock, String> 
             return Ok(statements);
         }
         let statement = parse_statement(iterator)?;
-        // println!("{:?}", statement);
         statements.push(statement)
     }
 }
 
 fn parse_statement(iterator: &mut ParserIterator) -> Result<Statement, String> {
-    // NOTE: Could change to next and remove the nexts in each function
     let token = iterator
         .peek()
         .ok_or("Missing token at start of statement".to_string())?;
@@ -319,12 +321,9 @@ fn parse_identifier(
             identifier,
             parse_function_call_arguements(iterator)?,
         )),
-        LexerToken::Symbol(Symbol::Equal) => {
-            let expression = parse_expression(iterator, 0)?;
-            Ok(Statement::VariableAssignment(
-                VariableAssignment::Assignment(identifier, expression),
-            ))
-        }
+        LexerToken::Symbol(Symbol::Equal) => Ok(Statement::VariableAssignment(
+            VariableAssignment::Assignment(identifier, parse_expression(iterator, 0)?),
+        )),
         token => Err(format!(
             "Invalid symbol after {:?}, found {:?}",
             identifier, token
@@ -363,6 +362,7 @@ fn parse_break_continue(
 ) -> Result<Statement, String> {
     let keyword = match keyword {
         Keyword::Break => Ok(Statement::Break),
+        Keyword::Return => Ok(Statement::Return),
         Keyword::Continue => Ok(Statement::Continue),
         _ => Err(format!("Invalid keyword '{:?}'", keyword)),
     };
