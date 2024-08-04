@@ -28,4 +28,6 @@ void main(int argc, char argv) {
 	for (;x < 10;) {
 		printf("Test");
 	}
+
+	hello(1, 2 +2, "Hello World");
 }

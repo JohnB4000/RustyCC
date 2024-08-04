@@ -507,15 +507,14 @@ fn parse_function_call_arguements(
     let mut arguements: Vec<Expression> = Vec::new();
 
     loop {
-        let token = iterator.peek().ok_or("Missing token".to_string())?;
-        if token == LexerToken::Symbol(Symbol::RBracket) {
-            iterator.next();
-            return Ok(Some(arguements));
-        }
-
         arguements.push(parse_expression(iterator, 0)?);
 
-        // TODO: Deal with comma
+        let token = iterator.next().ok_or("Missing token".to_string())?;
+        if token == LexerToken::Symbol(Symbol::RBracket) {
+            return Ok(Some(arguements));
+        } else if token != LexerToken::Symbol(Symbol::Comma) {
+            return Err(format!("Expected ',' found '{:?}'", token));
+        }
     }
 }
 
@@ -525,7 +524,7 @@ fn parse_expression(
 ) -> Result<Expression, String> {
     let mut left = parse_primary_expression(iterator)?;
     let mut operator = iterator.peek().ok_or("Expected operator".to_string())?;
-    if let LexerToken::Symbol(Symbol::Semicolon | Symbol::RBracket) = operator {
+    if let LexerToken::Symbol(Symbol::Semicolon | Symbol::RBracket | Symbol::Comma) = operator {
         return Ok(left);
     }
 
@@ -540,7 +539,7 @@ fn parse_expression(
         );
 
         operator = iterator.peek().ok_or("Expected operator".to_string())?;
-        if let LexerToken::Symbol(Symbol::Semicolon | Symbol::RBracket) = operator {
+        if let LexerToken::Symbol(Symbol::Semicolon | Symbol::RBracket | Symbol::Comma) = operator {
             return Ok(left);
         }
     }
