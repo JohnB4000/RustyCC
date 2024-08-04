@@ -7,8 +7,10 @@ void main(int argc, char argv) {
 	int x = 2;
 	int y;
 
-	y = x;
-	x = 12 + 2 * 4;
+	{
+		y = x;
+		x = 12 + 2 * 4;
+	}
 
 	if (x) {
 		bool p = true;
@@ -19,6 +21,7 @@ void main(int argc, char argv) {
 
 	while (x) {
 		x = 2;
+		continue;
 	}
 
 	for (int x = 2; x < 10; x = x + 1) {

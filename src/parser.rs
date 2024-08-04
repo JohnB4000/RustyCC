@@ -291,7 +291,7 @@ fn parse_statement(iterator: &mut ParserIterator) -> Result<Statement, String> {
     let statement = match token {
         LexerToken::Identifier(identifier) => parse_identifier(iterator, identifier)?,
         LexerToken::Keyword(keyword) => parse_keyword(iterator, keyword)?,
-        LexerToken::Symbol(Symbol::LBrace) => todo!("Parse symbol"), //Statement::CodeBlock(parse_code_block(iterator)?),
+        LexerToken::Symbol(Symbol::LBrace) => Statement::CodeBlock(parse_code_block(iterator)?),
         token => return Err(format!("Invalid token {:?} at start of statement", token)),
     };
 
@@ -333,6 +333,10 @@ fn parse_identifier(
 }
 
 fn parse_keyword(iterator: &mut ParserIterator, keyword: Keyword) -> Result<Statement, String> {
+    if let Ok(statement) = parse_break_continue(iterator, keyword.clone()) {
+        return Ok(statement);
+    }
+
     if let Ok(statement) = parse_variable_definition_declaration(iterator, keyword.clone()) {
         return Ok(statement);
     }
@@ -351,6 +355,22 @@ fn parse_keyword(iterator: &mut ParserIterator, keyword: Keyword) -> Result<Stat
         }
         _ => Err(format!("Invalid keyword here {:?}", keyword)),
     }
+}
+
+fn parse_break_continue(
+    iterator: &mut ParserIterator,
+    keyword: Keyword,
+) -> Result<Statement, String> {
+    let keyword = match keyword {
+        Keyword::Break => Ok(Statement::Break),
+        Keyword::Continue => Ok(Statement::Continue),
+        _ => Err(format!("Invalid keyword '{:?}'", keyword)),
+    };
+
+    if let Ok(_) = keyword {
+        iterator.next();
+    }
+    keyword
 }
 
 fn parse_variable_definition_declaration(
