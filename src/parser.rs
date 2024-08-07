@@ -12,7 +12,7 @@ pub enum TopLevel {
     VariableDefinition(ASTType, Identifier, Option<Expression>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Statement {
     FunctionCall(Identifier, Option<Vec<Expression>>),
     VariableAssignment(VariableAssignment),
@@ -23,14 +23,13 @@ pub enum Statement {
     Continue,
 }
 
-// Could merge with main enum
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum VariableAssignment {
     Definition(ASTType, Identifier, Option<Expression>),
     Assignment(Identifier, Expression),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Conditional {
     IfStatement(Vec<(Expression, CodeBlock)>),
     ForLoop(
@@ -39,10 +38,10 @@ pub enum Conditional {
         Option<VariableAssignment>,
         CodeBlock,
     ),
-    WhileLoop(Option<Expression>, CodeBlock),
+    WhileLoop(Expression, CodeBlock),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expression {
     Unary(UnaryOperator, Box<Expression>),
     Binary(Box<Expression>, BinaryOperator, Box<Expression>),
@@ -52,13 +51,14 @@ pub enum Expression {
     Grouping(Box<Expression>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum UnaryOperator {
     Negation,
     LogicalNegation,
+    BitwiseNot,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BinaryOperator {
     Add,
     Sub,
@@ -73,9 +73,12 @@ pub enum BinaryOperator {
     LtEq,
     And,
     Or,
+
+    BitwiseAnd,
+    BitwiseOr,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ASTLiteral {
     String(String),
     Int(i32),
@@ -85,7 +88,7 @@ pub enum ASTLiteral {
     Null,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ASTType {
     Int,
     Bool,
@@ -348,7 +351,7 @@ fn parse_keyword(iterator: &mut ParserIterator, keyword: Keyword) -> Result<Stat
         Keyword::While => {
             iterator.next();
             Ok(Statement::Conditional(Conditional::WhileLoop(
-                Some(parse_grouping(iterator)?),
+                parse_grouping(iterator)?,
                 parse_code_block(iterator)?,
             )))
         }
@@ -578,9 +581,12 @@ fn get_precedence(operator: &LexerToken) -> Result<i32, String> {
         LexerToken::Symbol(Symbol::LessThanOrEqual) => Ok(8),
         LexerToken::Symbol(Symbol::RAngleBracket) => Ok(8),
         LexerToken::Symbol(Symbol::GreaterThanOrEqual) => Ok(8),
-        LexerToken::Symbol(Symbol::And) => Ok(3),
-        LexerToken::Symbol(Symbol::Or) => Ok(2),
-        LexerToken::Symbol(Symbol::Equal) => Ok(1),
+        LexerToken::Symbol(Symbol::And) => Ok(6),
+        LexerToken::Symbol(Symbol::Or) => Ok(5),
+        LexerToken::Symbol(Symbol::Equal) => Ok(4),
+        LexerToken::Symbol(Symbol::BitwiseAnd) => Ok(3),
+        LexerToken::Symbol(Symbol::BitwiseOr) => Ok(2),
+        LexerToken::Symbol(Symbol::BitwiseNot) => Ok(1),
         token => Err(format!("Expected operator, found {:?}", token).to_string()),
     }
 }
@@ -599,6 +605,8 @@ fn convert_to_ast_token(operator: &LexerToken) -> Result<BinaryOperator, String>
         LexerToken::Symbol(Symbol::GreaterThanOrEqual) => Ok(BinaryOperator::GtEq),
         LexerToken::Symbol(Symbol::And) => Ok(BinaryOperator::And),
         LexerToken::Symbol(Symbol::Or) => Ok(BinaryOperator::Or),
+        LexerToken::Symbol(Symbol::BitwiseAnd) => Ok(BinaryOperator::BitwiseAnd),
+        LexerToken::Symbol(Symbol::BitwiseOr) => Ok(BinaryOperator::BitwiseOr),
         token => Err(format!("Expected operator, found {:?}", token).to_string()),
     }
 }
@@ -652,6 +660,13 @@ fn parse_unary_expresssion(iterator: &mut ParserIterator) -> Result<Expression, 
             iterator.next();
             Ok(Expression::Unary(
                 UnaryOperator::LogicalNegation,
+                Box::new(parse_primary_expression(iterator)?),
+            ))
+        }
+        LexerToken::Symbol(Symbol::BitwiseNot) => {
+            iterator.next();
+            Ok(Expression::Unary(
+                UnaryOperator::BitwiseNot,
                 Box::new(parse_primary_expression(iterator)?),
             ))
         }

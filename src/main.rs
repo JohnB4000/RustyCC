@@ -5,6 +5,10 @@ use std::{
     process::exit,
 };
 
+use interpreter::interpret;
+
+#[allow(unused)]
+mod interpreter;
 mod lexer;
 mod parser;
 
@@ -36,7 +40,16 @@ fn main() {
         }
     };
 
-    let ast = parser::parse(lexer_tokens);
+    let ast = match parser::parse(lexer_tokens) {
+        Ok(lexer_tokens) => lexer_tokens,
+        Err(error) => {
+            println!("{:?}", error);
+            exit(1)
+        }
+    };
 
-    println!("{:?}", ast);
+    if let Some(error) = interpreter::interpret(ast) {
+        println!("{:?}", error);
+        exit(1)
+    }
 }
