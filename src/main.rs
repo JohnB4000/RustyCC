@@ -5,9 +5,6 @@ use std::{
     process::exit,
 };
 
-use interpreter::interpret;
-
-#[allow(unused)]
 mod interpreter;
 mod lexer;
 mod parser;
@@ -48,8 +45,11 @@ fn main() {
         }
     };
 
-    if let Some(error) = interpreter::interpret(ast) {
-        println!("{:?}", error);
-        exit(1)
+    match interpreter::interpret(ast) {
+        Ok(exit_code) => exit(exit_code),
+        Err(error) => {
+            println!("{:?}", error);
+            exit(1);
+        }
     }
 }

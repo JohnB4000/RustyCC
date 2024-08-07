@@ -1,3 +1,27 @@
 int main(int argc, char argv) {
-	printf(1 + 2 * 10);
+	printf(do_something());
+	printf(add(1, 2));
+	printf(mul(3, 2));
+	return 0;
+}
+
+int do_something() {
+	for (int x = 1; x < 10; x = x + 1) {
+		if (x == 5) {
+			return x;
+		}
+	}
+}
+
+int add(int x, int y) {
+	return x + y;
+}
+
+int mul(int x, int y) {
+	int result = 0;
+	while (y > 0) {
+		result = result + x;
+		y = y - 1;
+	}
+	return result;
 }

@@ -193,14 +193,18 @@ fn scan(iterator: &mut LexerIterator) -> Result<LexerToken, String> {
             };
 
             match character {
-                '/' => loop {
+                '/' => {
                     iterator.next();
-                    match iterator.next() {
-                        Some('\n') => return scan(iterator),
-                        Some(_) => continue,
-                        None => return Err("Missing newline character after comment".to_string()),
+                    loop {
+                        match iterator.next() {
+                            Some('\n') => return scan(iterator),
+                            Some(_) => continue,
+                            None => {
+                                return Err("Missing newline character after comment".to_string())
+                            }
+                        }
                     }
-                },
+                }
                 '*' => loop {
                     iterator.next();
                     match iterator.next() {

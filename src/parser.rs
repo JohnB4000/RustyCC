@@ -18,7 +18,7 @@ pub enum Statement {
     VariableAssignment(VariableAssignment),
     Conditional(Conditional),
     CodeBlock(CodeBlock),
-    Return,
+    Return(Expression),
     Break,
     Continue,
 }
@@ -365,7 +365,10 @@ fn parse_break_continue(
 ) -> Result<Statement, String> {
     let keyword = match keyword {
         Keyword::Break => Ok(Statement::Break),
-        Keyword::Return => Ok(Statement::Return),
+        Keyword::Return => {
+            iterator.next();
+            return Ok(Statement::Return(parse_expression(iterator, 0)?));
+        }
         Keyword::Continue => Ok(Statement::Continue),
         _ => Err(format!("Invalid keyword '{:?}'", keyword)),
     };
@@ -680,11 +683,14 @@ fn parse_expression_identifier(iterator: &mut ParserIterator) -> Result<Expressi
         .ok_or("Expected primary expression".to_string())?
     {
         LexerToken::Identifier(identifier) => {
-            let token = iterator
-                .next()
+            iterator.next();
+
+            let next = iterator
+                .peek()
                 .ok_or("Missing token at start of top level element".to_string())?;
 
-            if token == LexerToken::Symbol(Symbol::LBracket) {
+            if next == LexerToken::Symbol(Symbol::LBracket) {
+                iterator.next();
                 Ok(Expression::FunctionCall(
                     identifier,
                     parse_function_call_arguements(iterator)?,

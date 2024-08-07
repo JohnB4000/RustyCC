@@ -1,9 +1,11 @@
-use std::{borrow::BorrowMut, collections::HashMap};
+use std::collections::HashMap;
 
 use crate::parser::{
-    ASTLiteral, ASTType, BinaryOperator, Conditional, Expression, Statement, TopLevel,
-    UnaryOperator, VariableAssignment,
+    ASTLiteral, BinaryOperator, Conditional, Expression, Statement, TopLevel, UnaryOperator,
+    VariableAssignment,
 };
+
+// TODO: Change Option<String> to Result<(), String>
 
 #[derive(Debug, Clone)]
 enum EvaluatedExpression {
@@ -14,6 +16,7 @@ enum EvaluatedExpression {
     Char(char),
     DefaultValue,
     Null,
+    ReturnValue(Box<Self>),
 }
 
 impl EvaluatedExpression {
@@ -231,17 +234,20 @@ impl FuncEnv {
                     if let EvaluatedExpression::DefaultValue = arguement {
                         return Err("Failure while trying to interpret arguements".to_string());
                     }
-                    variable_env.define_variable(parameter, Some(arguement.clone()));
+                    variable_env.define_variable(parameter, Some(arguement.clone()))?;
                 }
             }
             _ => (),
         }
 
-        let result = evaluate_code_block(&code_block.to_vec(), &mut variable_env, self);
+        let return_value = evaluate_code_block(&code_block.to_vec(), &mut variable_env, self)?;
 
         variable_env.remove_env();
 
-        result
+        match return_value {
+            EvaluatedExpression::ReturnValue(return_value) => Ok(*return_value),
+            _ => Ok(return_value),
+        }
     }
 }
 
@@ -267,14 +273,14 @@ impl VarEnv {
         &mut self,
         identifier: &String,
         inital_value: Option<EvaluatedExpression>,
-    ) -> Option<String> {
-        let mut variable_values = match self.env.last_mut() {
+    ) -> Result<EvaluatedExpression, String> {
+        let variable_values = match self.env.last_mut() {
             Some(env) => env,
-            None => return Some("No envs defined".to_string()),
+            None => return Err("No envs defined".to_string()),
         };
 
         if variable_values.contains_key(identifier) {
-            return Some(format!("Variable already defined: {:?}", identifier));
+            return Err(format!("Variable already defined: {:?}", identifier));
         }
 
         variable_values.insert(
@@ -282,25 +288,21 @@ impl VarEnv {
             inital_value.unwrap_or(EvaluatedExpression::DefaultValue),
         );
 
-        None
+        Ok(EvaluatedExpression::Null)
     }
 
     fn assign_variable(
         &mut self,
         identifier: &String,
         value: EvaluatedExpression,
-    ) -> Option<String> {
-        let mut env = match self.env.last_mut() {
-            Some(env) => env,
-            None => return Some("No envs defined".to_string()),
-        };
-
-        if !env.contains_key(identifier) {
-            return Some(format!("Variable not defined: {:?}", identifier));
+    ) -> Result<EvaluatedExpression, String> {
+        for env in self.env.iter_mut() {
+            if env.contains_key(identifier) {
+                env.insert(identifier.to_string(), value);
+                return Ok(EvaluatedExpression::Null);
+            }
         }
-
-        env.insert(identifier.to_string(), value);
-        None
+        Err(format!("Variable {:?} doesn't exist", identifier))
     }
 
     fn get_variable(&mut self, identifier: &String) -> Result<EvaluatedExpression, String> {
@@ -313,7 +315,7 @@ impl VarEnv {
     }
 }
 
-pub fn interpret(ast: Vec<TopLevel>) -> Option<String> {
+pub fn interpret(ast: Vec<TopLevel>) -> Result<i32, String> {
     let mut variable_env = VarEnv::new();
     variable_env.add_env();
     let mut function_env = FuncEnv::new();
@@ -338,23 +340,21 @@ pub fn interpret(ast: Vec<TopLevel>) -> Option<String> {
                         match evaluate_expression(&expression, &mut variable_env, &mut function_env)
                         {
                             Ok(expression) => Some(expression),
-                            Err(error) => return Some(error),
+                            Err(error) => return Err(error),
                         }
                     }
                     None => None,
                 };
-                variable_env.define_variable(&identifier, expression);
+                variable_env.define_variable(&identifier, expression)?;
             }
         }
     }
 
-    if let Err(error) =
-        function_env.evaluate_function_call(&"main".to_string(), &None, &mut variable_env)
-    {
-        return Some(error);
+    match function_env.evaluate_function_call(&"main".to_string(), &None, &mut variable_env) {
+        Ok(EvaluatedExpression::Int(exit_code)) if exit_code >= 0 => Ok(exit_code),
+        Err(error) => Err(error),
+        return_type => Err(format!("Invalid return type in main: {:?}", return_type)),
     }
-
-    None
 }
 
 fn evaluate_code_block(
@@ -365,29 +365,32 @@ fn evaluate_code_block(
     variable_env.add_env();
 
     for statement in code_block {
-        match statement {
-            Statement::FunctionCall(identifier, arguements) => {
-                evaluate_function_call(identifier, arguements, variable_env, function_env)?;
-            }
-            Statement::VariableAssignment(variable_assignment) => {
-                if let Some(error) =
-                    evaluate_variable_assignment(&variable_assignment, variable_env, function_env)
-                {
-                    return Err(error);
+        let return_value =
+            match statement {
+                Statement::FunctionCall(identifier, arguements) => {
+                    evaluate_function_call(identifier, arguements, variable_env, function_env)?
                 }
-            }
-            Statement::Conditional(conditional) => {
-                if let Some(error) = evaluate_conditional(&conditional, variable_env, function_env)
-                {
-                    return Err(error);
+                Statement::VariableAssignment(variable_assignment) => {
+                    evaluate_variable_assignment(&variable_assignment, variable_env, function_env)?
                 }
-            }
-            Statement::CodeBlock(code_block) => {
-                evaluate_code_block(code_block, variable_env, function_env)?;
-            }
-            Statement::Return => todo!(),
-            Statement::Break => todo!(),
-            Statement::Continue => todo!(),
+                Statement::Conditional(conditional) => {
+                    evaluate_conditional(&conditional, variable_env, function_env)?
+                }
+                Statement::CodeBlock(code_block) => {
+                    return evaluate_code_block(code_block, variable_env, function_env);
+                }
+                Statement::Return(return_value) => {
+                    let return_value = EvaluatedExpression::ReturnValue(Box::new(
+                        evaluate_expression(return_value, variable_env, function_env)?,
+                    ));
+                    variable_env.remove_env();
+                    return Ok(return_value);
+                }
+                Statement::Break => todo!(),
+                Statement::Continue => todo!(),
+            };
+        if let EvaluatedExpression::ReturnValue(_) = return_value {
+            return Ok(return_value);
         }
     }
 
@@ -453,7 +456,7 @@ fn evaluate_variable_assignment(
     variable_assignment: &VariableAssignment,
     variable_env: &mut VarEnv,
     function_env: &mut FuncEnv,
-) -> Option<String> {
+) -> Result<EvaluatedExpression, String> {
     match variable_assignment {
         VariableAssignment::Definition(_, identifier, expression) => {
             match expression
@@ -462,14 +465,14 @@ fn evaluate_variable_assignment(
                 .transpose()
             {
                 Ok(expression) => variable_env.define_variable(identifier, expression),
-                Err(error) => Some(error),
+                Err(error) => Err(error),
             }
         }
 
         VariableAssignment::Assignment(identifier, expression) => {
             let expression = match evaluate_expression(expression, variable_env, function_env) {
                 Ok(expression) => expression,
-                Err(error) => return Some(error),
+                Err(error) => return Err(error),
             };
             variable_env.assign_variable(identifier, expression)
         }
@@ -480,7 +483,7 @@ fn evaluate_conditional(
     conditional: &Conditional,
     variable_env: &mut VarEnv,
     function_env: &mut FuncEnv,
-) -> Option<String> {
+) -> Result<EvaluatedExpression, String> {
     match conditional {
         Conditional::IfStatement(if_statement) => {
             evaluate_if_statement(if_statement, variable_env, function_env)
@@ -508,22 +511,25 @@ fn evaluate_if_statement(
     if_statement: &Vec<(Expression, Vec<Statement>)>,
     variable_env: &mut VarEnv,
     function_env: &mut FuncEnv,
-) -> Option<String> {
+) -> Result<EvaluatedExpression, String> {
     for (condition, code_block) in if_statement {
         match evaluate_expression(condition, variable_env, function_env) {
             Ok(EvaluatedExpression::Bool(true)) => {
                 return match evaluate_code_block(code_block, variable_env, function_env) {
-                    Ok(_) => None,
-                    Err(error) => Some(error),
+                    Ok(EvaluatedExpression::ReturnValue(return_value)) => {
+                        Ok(EvaluatedExpression::ReturnValue(return_value))
+                    }
+                    Err(error) => Err(error),
+                    return_type => Err(format!("Invalid return type, {:?}", return_type)),
                 }
             }
             Ok(EvaluatedExpression::Bool(false)) => continue,
-            Ok(_) => return Some("Invalid condition".to_string()),
-            Err(error) => return Some(error),
+            Ok(_) => return Err("Invalid condition".to_string()),
+            Err(error) => return Err(error),
         }
     }
 
-    None
+    Ok(EvaluatedExpression::Null)
 }
 
 fn evaluate_for_loop(
@@ -533,26 +539,26 @@ fn evaluate_for_loop(
     code_block: &Vec<Statement>,
     variable_env: &mut VarEnv,
     function_env: &mut FuncEnv,
-) -> Option<String> {
+) -> Result<EvaluatedExpression, String> {
     if let Some(statement) = initial_statement {
-        if let Some(error) = evaluate_variable_assignment(statement, variable_env, function_env) {
-            return Some(error);
-        }
+        evaluate_variable_assignment(statement, variable_env, function_env)?;
     }
 
     loop {
         if let Some(condition) = exit_condition {
-            match evaluate_expression(condition, variable_env, function_env) {
-                Ok(EvaluatedExpression::Bool(true)) => (),
-                Ok(EvaluatedExpression::Bool(false)) => return None,
-                Err(error) => return Some(error),
-                _ => return Some("Invalid exit condition".to_string()),
+            match evaluate_expression(condition, variable_env, function_env)? {
+                EvaluatedExpression::Bool(true) => (),
+                EvaluatedExpression::Bool(false) => return Ok(EvaluatedExpression::Null),
+                _ => return Err("Invalid exit condition".to_string()),
             }
         }
 
         match evaluate_code_block(code_block, variable_env, function_env) {
-            Ok(return_value) => (),
-            Err(error) => return Some(error),
+            Ok(EvaluatedExpression::ReturnValue(value)) => {
+                return Ok(EvaluatedExpression::ReturnValue(value))
+            }
+            Err(error) => return Err(error),
+            _ => (),
         }
 
         if let Some(statement) = continuous_expression {
@@ -566,18 +572,21 @@ fn evaluate_while_loop(
     code_block: &Vec<Statement>,
     variable_env: &mut VarEnv,
     function_env: &mut FuncEnv,
-) -> Option<String> {
+) -> Result<EvaluatedExpression, String> {
     loop {
         match evaluate_expression(condition, variable_env, function_env) {
             Ok(EvaluatedExpression::Bool(true)) => (),
-            Ok(EvaluatedExpression::Bool(false)) => return None,
-            Err(error) => return Some(error),
-            _ => return Some("Invalid exit condition".to_string()),
+            Ok(EvaluatedExpression::Bool(false)) => return Ok(EvaluatedExpression::Null),
+            Err(error) => return Err(error),
+            _ => return Err("Invalid exit condition".to_string()),
         }
 
         match evaluate_code_block(code_block, variable_env, function_env) {
-            Ok(return_value) => (),
-            Err(error) => return Some(error),
+            Ok(EvaluatedExpression::ReturnValue(return_value)) => {
+                return Ok(EvaluatedExpression::ReturnValue(return_value));
+            }
+            Err(error) => return Err(error),
+            _ => (),
         }
     }
 }
