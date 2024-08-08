@@ -6,10 +6,15 @@ int main(int argc, char argv) {
 }
 
 int do_something() {
-	for (int x = 1; x < 10; x = x + 1) {
-		if (x == 5) {
-			return x;
+	int x = -1;
+	while (x < 10) {
+		x = x + 1;
+		if (x == 6) {
+			break;
+		} else if (x == 2) {
+			continue;
 		}
+		printf(x);
 	}
 }
 

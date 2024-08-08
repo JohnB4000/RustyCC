@@ -5,8 +5,6 @@ use crate::parser::{
     VariableAssignment,
 };
 
-// TODO: Change Option<String> to Result<(), String>
-
 #[derive(Debug, Clone)]
 enum EvaluatedExpression {
     Int(i32),
@@ -17,6 +15,8 @@ enum EvaluatedExpression {
     DefaultValue,
     Null,
     ReturnValue(Box<Self>),
+    Break,
+    Continue,
 }
 
 impl EvaluatedExpression {
@@ -246,6 +246,10 @@ impl FuncEnv {
 
         match return_value {
             EvaluatedExpression::ReturnValue(return_value) => Ok(*return_value),
+            EvaluatedExpression::Break => return Err("Invalid break statement in".to_string()),
+            EvaluatedExpression::Continue => {
+                return Err("Invalid continue statement in".to_string())
+            }
             _ => Ok(return_value),
         }
     }
@@ -365,32 +369,33 @@ fn evaluate_code_block(
     variable_env.add_env();
 
     for statement in code_block {
-        let return_value =
-            match statement {
-                Statement::FunctionCall(identifier, arguements) => {
-                    evaluate_function_call(identifier, arguements, variable_env, function_env)?
-                }
-                Statement::VariableAssignment(variable_assignment) => {
-                    evaluate_variable_assignment(&variable_assignment, variable_env, function_env)?
-                }
-                Statement::Conditional(conditional) => {
-                    evaluate_conditional(&conditional, variable_env, function_env)?
-                }
-                Statement::CodeBlock(code_block) => {
-                    return evaluate_code_block(code_block, variable_env, function_env);
-                }
-                Statement::Return(return_value) => {
-                    let return_value = EvaluatedExpression::ReturnValue(Box::new(
-                        evaluate_expression(return_value, variable_env, function_env)?,
-                    ));
-                    variable_env.remove_env();
-                    return Ok(return_value);
-                }
-                Statement::Break => todo!(),
-                Statement::Continue => todo!(),
-            };
-        if let EvaluatedExpression::ReturnValue(_) = return_value {
-            return Ok(return_value);
+        let return_value = match statement {
+            Statement::FunctionCall(identifier, arguements) => {
+                evaluate_function_call(identifier, arguements, variable_env, function_env)?
+            }
+            Statement::VariableAssignment(variable_assignment) => {
+                evaluate_variable_assignment(&variable_assignment, variable_env, function_env)?
+            }
+            Statement::Conditional(conditional) => {
+                evaluate_conditional(&conditional, variable_env, function_env)?
+            }
+            Statement::CodeBlock(code_block) => {
+                return evaluate_code_block(code_block, variable_env, function_env);
+            }
+            Statement::Return(return_value) => EvaluatedExpression::ReturnValue(Box::new(
+                evaluate_expression(return_value, variable_env, function_env)?,
+            )),
+            Statement::Break => return Ok(EvaluatedExpression::Break),
+            Statement::Continue => return Ok(EvaluatedExpression::Continue),
+        };
+        match return_value {
+            EvaluatedExpression::ReturnValue(_)
+            | EvaluatedExpression::Break
+            | EvaluatedExpression::Continue => {
+                variable_env.remove_env();
+                return Ok(return_value);
+            }
+            _ => (),
         }
     }
 
@@ -519,6 +524,8 @@ fn evaluate_if_statement(
                     Ok(EvaluatedExpression::ReturnValue(return_value)) => {
                         Ok(EvaluatedExpression::ReturnValue(return_value))
                     }
+                    Ok(EvaluatedExpression::Break) => Ok(EvaluatedExpression::Break),
+                    Ok(EvaluatedExpression::Continue) => Ok(EvaluatedExpression::Continue),
                     Err(error) => Err(error),
                     return_type => Err(format!("Invalid return type, {:?}", return_type)),
                 }
@@ -557,6 +564,8 @@ fn evaluate_for_loop(
             Ok(EvaluatedExpression::ReturnValue(value)) => {
                 return Ok(EvaluatedExpression::ReturnValue(value))
             }
+            Ok(EvaluatedExpression::Break) => return Ok(EvaluatedExpression::Null),
+            Ok(EvaluatedExpression::Continue) => (),
             Err(error) => return Err(error),
             _ => (),
         }
@@ -585,6 +594,8 @@ fn evaluate_while_loop(
             Ok(EvaluatedExpression::ReturnValue(return_value)) => {
                 return Ok(EvaluatedExpression::ReturnValue(return_value));
             }
+            Ok(EvaluatedExpression::Break) => return Ok(EvaluatedExpression::Null),
+            Ok(EvaluatedExpression::Continue) => (),
             Err(error) => return Err(error),
             _ => (),
         }
