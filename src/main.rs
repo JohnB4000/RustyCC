@@ -5,7 +5,9 @@ use std::{
     process::exit,
 };
 
-mod interpreter;
+#[allow(unused)]
+// mod interpreter;
+mod code_generator;
 mod lexer;
 mod parser;
 
@@ -45,8 +47,16 @@ fn main() {
         }
     };
 
-    match interpreter::interpret(ast) {
-        Ok(exit_code) => exit(exit_code),
+    // match interpreter::interpret(ast) {
+    //     Ok(exit_code) => exit(exit_code),
+    //     Err(error) => {
+    //         println!("{:?}", error);
+    //         exit(1);
+    //     }
+    // }
+
+    match code_generator::generate_code(ast) {
+        Ok(()) => (),
         Err(error) => {
             println!("{:?}", error);
             exit(1);

@@ -1,3 +1,11 @@
+int main() {
+	int x = 12;
+	printf(2 * (2 + 2));
+}
+
+
+
+/* 
 int main(int argc, char argv) {
 	printf(do_something());
 	printf(add(1, 2));
@@ -30,3 +38,4 @@ int mul(int x, int y) {
 	}
 	return result;
 }
+*/
