@@ -1,7 +1,45 @@
 int main() {
-	int x = 12;
-	printf(2 * (2 + 2));
+	printf(add(9, 1));
 }
+
+int add(int x, int y) {
+	return x - y;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

@@ -43,12 +43,25 @@ impl LocalSymbolsTable {
                 return Some(value.to_string());
             }
         }
+
         None
     }
 
     fn register_local_variable(&mut self, identifier: &String, size: usize) {
         self.current_index += size;
         self.insert(identifier, format!("rbp-{}", self.current_index));
+    }
+
+    fn decrease_pointer(&mut self, amount: usize) {
+        self.current_index += amount
+    }
+
+    fn increase_pointer(&mut self, amount: usize) {
+        self.current_index -= amount;
+    }
+
+    fn get_pointer(&self) -> usize {
+        self.current_index
     }
 }
 
@@ -229,8 +242,22 @@ fn generate_function(
         file.write_all(format!("\tsub rsp, {}\n\n", local_variable_size).as_bytes());
     }
 
-    // TODO: Deal with parameters - move from reg to stack
-    // RDI, RSI, RDX, RCX, R8, R9, rest on stack
+    let parameter_registers = vec!["edi", "esi", "edx", "ecx", "r8d", "r9d"];
+    if let Some(parameters) = parameters {
+        for index in 0..parameters.len() {
+            let (_, identifier) = &parameters[index];
+            symbols_table.register_local_variable(identifier, 4);
+
+            let pointer = match symbols_table.get(identifier) {
+                Some(pointer) => pointer,
+                None => todo!("Implement error handling"),
+            };
+
+            file.write_all(
+                format!("\tmov [{}], {}\n\n", pointer, parameter_registers[index]).as_bytes(),
+            );
+        }
+    }
 
     generate_code_block(file, register_tracker, &mut symbols_table, code_block);
 
@@ -314,13 +341,39 @@ fn generate_code_block(
                     variable_assignment,
                 )
             }
-            Statement::Conditional(_) => todo!("Conditional"),
+            Statement::Conditional(conditional) => {
+                generate_conditional(file, register_tracker, symbols_table, conditional)
+            }
             Statement::CodeBlock(code_block) => {
                 symbols_table.add_env();
                 generate_code_block(file, register_tracker, symbols_table, code_block);
                 symbols_table.remove_env();
             }
-            Statement::Return(_) => todo!("Return value"),
+            Statement::Return(expression) => {
+                let register_index =
+                    generate_expression(file, register_tracker, symbols_table, expression);
+                write_vector(
+                    file,
+                    vec![
+                        format!(
+                            "\tmov eax, {}\n",
+                            register_tracker.loopup_register(register_index)
+                        )
+                        .as_bytes(),
+                        "\n\tmov rsp, rbp\n\n".as_bytes(),
+                        "\tpop r15\n".as_bytes(),
+                        "\tpop r14\n".as_bytes(),
+                        "\tpop r13\n".as_bytes(),
+                        "\tpop r12\n".as_bytes(),
+                        "\tpop rbp\n\n".as_bytes(),
+                        "\tret\n".as_bytes(),
+                    ],
+                );
+
+                // ISSUE: If in main its the wrong return boilerplate no need to pop them off
+                //
+                // ISSUE: Will double generate the return boilerplate
+            }
             Statement::Break => todo!("Break"),
             Statement::Continue => todo!("Continue"),
         }
@@ -335,31 +388,52 @@ fn generate_function_call(
     arguements: &Option<Vec<Expression>>,
 ) {
     let arguement_registers = vec!["edi", "esi", "edx", "ecx", "r8d", "r9d"];
-
-    if identifier == "printf" {
-        file.write_all("\tmov edi, int_format\n".as_bytes());
-    }
+    let mut arguement_pointers = Vec::new();
+    let mut parameter_size = 0;
 
     if let Some(arguements) = arguements {
         for index in 0..arguements.len() {
-            file.write_all("\n".as_bytes());
             let register_index =
                 generate_expression(file, register_tracker, symbols_table, &arguements[index]);
+            symbols_table.decrease_pointer(4);
+            parameter_size += 4;
+            write_vector(
+                file,
+                vec![
+                    "\n\tsub rsp, 4\n".as_bytes(),
+                    format!(
+                        "\tmov [rbp-{}], {}\n\n",
+                        symbols_table.get_pointer(),
+                        register_tracker.loopup_register(register_index),
+                    )
+                    .as_bytes(),
+                ],
+            );
+            register_tracker.release_register(register_index);
+            arguement_pointers.push(symbols_table.get_pointer());
+        }
+
+        if identifier == "printf" {
+            file.write_all("\tmov edi, int_format\n".as_bytes());
+        }
+        for index in 0..arguements.len() {
             file.write_all(
                 format!(
-                    "\tmov {}, {}\n",
+                    "\tmov {}, [rbp-{}]\n",
                     arguement_registers[if identifier == "printf" {
-                        index + 1
+                        arguements.len() - index - 1 + 1
                     } else {
-                        index
+                        arguements.len() - index - 1
                     }],
-                    register_tracker.loopup_register(register_index)
+                    arguement_pointers[arguements.len() - index - 1]
                 )
                 .as_bytes(),
             );
-            register_tracker.release_register(register_index);
         }
     }
+
+    symbols_table.increase_pointer(parameter_size);
+    file.write_all(format!("\tadd rsp, {}\n", parameter_size).as_bytes());
 
     // ISSUE: Problem may arise when using r8 and r9 for paramters if being used for operations
     // Potential solve: if r8 and r9 are being used move them to the stack and record that in
@@ -449,6 +523,67 @@ fn generate_variable_assignment(
     register_tracker.release_register(register_index);
 }
 
+fn generate_conditional(
+    file: &mut BufWriter<File>,
+    register_tracker: &mut RegisterTracker,
+    symbols_table: &mut LocalSymbolsTable,
+    conditional: &Conditional,
+) {
+    match conditional {
+        Conditional::IfStatement(if_statement) => {
+            generate_if_statement(file, register_tracker, symbols_table, if_statement)
+        }
+        Conditional::ForLoop(
+            initial_statement,
+            exit_condition,
+            continuous_expression,
+            code_block,
+        ) => generate_for_loop(
+            file,
+            register_tracker,
+            symbols_table,
+            initial_statement,
+            exit_condition,
+            continuous_expression,
+            code_block,
+        ),
+        Conditional::WhileLoop(condition, code_block) => {
+            generate_while_loop(file, register_tracker, symbols_table, condition, code_block)
+        }
+    }
+}
+
+fn generate_if_statement(
+    file: &mut BufWriter<File>,
+    register_tracker: &mut RegisterTracker,
+    symbols_table: &mut LocalSymbolsTable,
+    if_statement: &Vec<(Expression, Vec<Statement>)>,
+) {
+    todo!()
+}
+
+fn generate_for_loop(
+    file: &mut BufWriter<File>,
+    register_tracker: &mut RegisterTracker,
+    symbols_table: &mut LocalSymbolsTable,
+    initial_statement: &Option<VariableAssignment>,
+    exit_condition: &Option<Expression>,
+    continuous_expression: &Option<VariableAssignment>,
+    code_block: &Vec<Statement>,
+) {
+    todo!()
+}
+
+fn generate_while_loop(
+    file: &mut BufWriter<File>,
+    register_tracker: &mut RegisterTracker,
+    symbols_table: &mut LocalSymbolsTable,
+    condition: &Expression,
+    code_block: &Vec<Statement>,
+) {
+    todo!()
+}
+
 fn generate_expression(
     file: &mut BufWriter<File>,
     register_tracker: &mut RegisterTracker,
@@ -502,7 +637,7 @@ fn generate_expression(
 
             file.write_all(
                 format!(
-                    "\nmov {}, rax",
+                    "\tmov {}, eax\n",
                     register_tracker.loopup_register(register_index)
                 )
                 .as_bytes(),
@@ -641,16 +776,220 @@ fn generate_binary_expression(
             register_tracker.release_register(right_index);
             left_index
         }
-        BinaryOperator::Eq => todo!(),
-        BinaryOperator::NEq => todo!(),
-        BinaryOperator::Gt => todo!(),
-        BinaryOperator::Lt => todo!(),
-        BinaryOperator::GtEq => todo!(),
-        BinaryOperator::LtEq => todo!(),
-        BinaryOperator::And => todo!(),
-        BinaryOperator::Or => todo!(),
-        BinaryOperator::BitwiseAnd => todo!(),
-        BinaryOperator::BitwiseOr => todo!(),
+        BinaryOperator::Eq => {
+            write_vector(
+                file,
+                vec![
+                    "\tmov eax, 0\n".as_bytes(),
+                    format!(
+                        "\tcmp {}, {}\n",
+                        register_tracker.loopup_register(left_index),
+                        register_tracker.loopup_register(right_index)
+                    )
+                    .as_bytes(),
+                    "\tsete al\n".as_bytes(),
+                    format!(
+                        "\tmovzx {}, al\n",
+                        register_tracker.loopup_register(left_index),
+                    )
+                    .as_bytes(),
+                ],
+            );
+            register_tracker.release_register(right_index);
+            left_index
+        }
+        BinaryOperator::NEq => {
+            write_vector(
+                file,
+                vec![
+                    "\tmov eax, 0\n".as_bytes(),
+                    format!(
+                        "\tcmp {}, {}\n",
+                        register_tracker.loopup_register(left_index),
+                        register_tracker.loopup_register(right_index)
+                    )
+                    .as_bytes(),
+                    "\tsetne al\n".as_bytes(),
+                    format!(
+                        "\tmovzx {}, al\n",
+                        register_tracker.loopup_register(left_index),
+                    )
+                    .as_bytes(),
+                ],
+            );
+            register_tracker.release_register(right_index);
+            left_index
+        }
+        BinaryOperator::Gt => {
+            write_vector(
+                file,
+                vec![
+                    "\tmov eax, 0\n".as_bytes(),
+                    format!(
+                        "\tcmp {}, {}\n",
+                        register_tracker.loopup_register(left_index),
+                        register_tracker.loopup_register(right_index)
+                    )
+                    .as_bytes(),
+                    "\tsetg al\n".as_bytes(),
+                    format!(
+                        "\tmovzx {}, al\n",
+                        register_tracker.loopup_register(left_index),
+                    )
+                    .as_bytes(),
+                ],
+            );
+            register_tracker.release_register(right_index);
+            left_index
+        }
+        BinaryOperator::Lt => {
+            write_vector(
+                file,
+                vec![
+                    "\tmov eax, 0\n".as_bytes(),
+                    format!(
+                        "\tcmp {}, {}\n",
+                        register_tracker.loopup_register(left_index),
+                        register_tracker.loopup_register(right_index)
+                    )
+                    .as_bytes(),
+                    "\tsetl al\n".as_bytes(),
+                    format!(
+                        "\tmovzx {}, al\n",
+                        register_tracker.loopup_register(left_index),
+                    )
+                    .as_bytes(),
+                ],
+            );
+            register_tracker.release_register(right_index);
+            left_index
+        }
+        BinaryOperator::GtEq => {
+            write_vector(
+                file,
+                vec![
+                    "\tmov eax, 0\n".as_bytes(),
+                    format!(
+                        "\tcmp {}, {}\n",
+                        register_tracker.loopup_register(left_index),
+                        register_tracker.loopup_register(right_index)
+                    )
+                    .as_bytes(),
+                    "\tsetge al\n".as_bytes(),
+                    format!(
+                        "\tmovzx {}, al\n",
+                        register_tracker.loopup_register(left_index),
+                    )
+                    .as_bytes(),
+                ],
+            );
+            register_tracker.release_register(right_index);
+            left_index
+        }
+        BinaryOperator::LtEq => {
+            write_vector(
+                file,
+                vec![
+                    "\tmov eax, 0\n".as_bytes(),
+                    format!(
+                        "\tcmp {}, {}\n",
+                        register_tracker.loopup_register(left_index),
+                        register_tracker.loopup_register(right_index)
+                    )
+                    .as_bytes(),
+                    "\tsetle al\n".as_bytes(),
+                    format!(
+                        "\tmovzx {}, al\n",
+                        register_tracker.loopup_register(left_index),
+                    )
+                    .as_bytes(),
+                ],
+            );
+            register_tracker.release_register(right_index);
+            left_index
+        }
+        BinaryOperator::And => {
+            write_vector(
+                file,
+                vec![
+                    format!(
+                        "\ttest {}, {}\n",
+                        register_tracker.loopup_register(left_index),
+                        register_tracker.loopup_register(left_index)
+                    )
+                    .as_bytes(),
+                    "\tsetnz al\n".as_bytes(),
+                    format!(
+                        "\ttest {}, {}\n",
+                        register_tracker.loopup_register(right_index),
+                        register_tracker.loopup_register(right_index)
+                    )
+                    .as_bytes(),
+                    "\tsetnz bl\n".as_bytes(),
+                    "\tand al, bl\n".as_bytes(),
+                    format!(
+                        "\tmovzx {}, al\n",
+                        register_tracker.loopup_register(left_index),
+                    )
+                    .as_bytes(),
+                ],
+            );
+            register_tracker.release_register(right_index);
+            left_index
+        }
+        BinaryOperator::Or => {
+            write_vector(
+                file,
+                vec![
+                    format!(
+                        "\ttest {}, {}\n",
+                        register_tracker.loopup_register(left_index),
+                        register_tracker.loopup_register(left_index)
+                    )
+                    .as_bytes(),
+                    "\tsetnz al\n".as_bytes(),
+                    format!(
+                        "\ttest {}, {}\n",
+                        register_tracker.loopup_register(right_index),
+                        register_tracker.loopup_register(right_index)
+                    )
+                    .as_bytes(),
+                    "\tsetnz bl\n".as_bytes(),
+                    "\tor al, bl\n".as_bytes(),
+                    format!(
+                        "\tmovzx {}, al\n",
+                        register_tracker.loopup_register(left_index),
+                    )
+                    .as_bytes(),
+                ],
+            );
+            register_tracker.release_register(right_index);
+            left_index
+        }
+        BinaryOperator::BitwiseAnd => {
+            file.write_all(
+                format!(
+                    "\tand {}, {}\n",
+                    register_tracker.loopup_register(left_index),
+                    register_tracker.loopup_register(right_index)
+                )
+                .as_bytes(),
+            );
+            register_tracker.release_register(right_index);
+            left_index
+        }
+        BinaryOperator::BitwiseOr => {
+            file.write_all(
+                format!(
+                    "\tor {}, {}\n",
+                    register_tracker.loopup_register(left_index),
+                    register_tracker.loopup_register(right_index)
+                )
+                .as_bytes(),
+            );
+            register_tracker.release_register(right_index);
+            left_index
+        }
     }
 }
 
