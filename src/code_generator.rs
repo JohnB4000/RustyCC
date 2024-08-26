@@ -115,7 +115,7 @@ impl LabelTracker {
         label_tracker
     }
 
-    fn generate_label(&mut self) -> String {
+    fn add_label(&mut self) -> String {
         for index in 0..self.current_label.len() {
             self.current_label[index] += 1;
             if self.current_label[index] <= 122 {
@@ -511,10 +511,10 @@ fn generate_function_call(
     write_vector(
         file,
         vec![
-            "\tsub rsp, 16\n\n".as_bytes(),
+            "\tsub rsp, 1\n\n".as_bytes(),
             "\tand rsp, 0xFFFFFFFFFFFFFFF0\n".as_bytes(),
             format!("\tcall {}\n\n", identifier).as_bytes(),
-            "\tadd rsp, 16\n".as_bytes(),
+            "\tadd rsp, 1\n".as_bytes(),
         ],
     );
 }
@@ -648,9 +648,51 @@ fn generate_if_statement(
     register_tracker: &mut RegisterTracker,
     label_tracker: &mut LabelTracker,
     symbols_table: &mut LocalSymbolsTable,
-    if_statement: &Vec<(Expression, Vec<Statement>)>,
+    if_statement: &Vec<(Option<Expression>, Vec<Statement>)>,
 ) {
-    todo!()
+    let mut labels = Vec::new();
+    for index in 0..if_statement.len() {
+        labels.push(label_tracker.add_label());
+    }
+    labels.push(label_tracker.add_label());
+
+    for index in 0..if_statement.len() {
+        let (expression, code_block) = &if_statement[index];
+        file.write_all(format!(".{}:\n", labels[index]).as_bytes());
+
+        if let Some(expression) = expression {
+            let register_index = generate_expression(
+                file,
+                register_tracker,
+                label_tracker,
+                symbols_table,
+                expression,
+            );
+
+            write_vector(
+                file,
+                vec![
+                    format!(
+                        "\n\tcmp {}, 0\n",
+                        register_tracker.loopup_register(register_index)
+                    )
+                    .as_bytes(),
+                    format!("\tjle .{}\n\n", labels[index + 1]).as_bytes(),
+                ],
+            );
+            register_tracker.release_register(register_index);
+        }
+        generate_code_block(
+            file,
+            register_tracker,
+            label_tracker,
+            symbols_table,
+            code_block,
+        );
+
+        file.write_all(format!("\tjmp .{}\n", labels.last().unwrap()).as_bytes());
+    }
+    file.write_all(format!(".{}:\n", labels.last().unwrap()).as_bytes());
 }
 
 fn generate_for_loop(
@@ -663,8 +705,8 @@ fn generate_for_loop(
     continuous_expression: &Option<VariableAssignment>,
     code_block: &Vec<Statement>,
 ) {
-    let start_label = label_tracker.generate_label();
-    let end_label = label_tracker.generate_label();
+    let start_label = label_tracker.add_label();
+    let end_label = label_tracker.add_label();
 
     if let Some(initial_statement) = initial_statement {
         generate_variable_definition_assignment(
@@ -676,7 +718,7 @@ fn generate_for_loop(
         );
     }
 
-    file.write_all(format!("{}:\n", start_label).as_bytes());
+    file.write_all(format!(".{}:\n", start_label).as_bytes());
 
     if let Some(exit_condition) = exit_condition {
         let register_index = generate_expression(
@@ -695,7 +737,7 @@ fn generate_for_loop(
                     register_tracker.loopup_register(register_index)
                 )
                 .as_bytes(),
-                format!("\tjle {}\n\n", end_label).as_bytes(),
+                format!("\tjle .{}\n\n", end_label).as_bytes(),
             ],
         );
         register_tracker.release_register(register_index);
@@ -722,8 +764,8 @@ fn generate_for_loop(
     write_vector(
         file,
         vec![
-            format!("\tjmp {}\n", start_label).as_bytes(),
-            format!("{}:\n", end_label).as_bytes(),
+            format!("\tjmp .{}\n", start_label).as_bytes(),
+            format!(".{}:\n", end_label).as_bytes(),
         ],
     );
 }
@@ -736,10 +778,10 @@ fn generate_while_loop(
     condition: &Expression,
     code_block: &Vec<Statement>,
 ) {
-    let start_label = label_tracker.generate_label();
-    let end_label = label_tracker.generate_label();
+    let start_label = label_tracker.add_label();
+    let end_label = label_tracker.add_label();
 
-    file.write_all(format!("{}:\n", start_label).as_bytes());
+    file.write_all(format!(".{}:\n", start_label).as_bytes());
 
     let register_index = generate_expression(
         file,
@@ -757,7 +799,7 @@ fn generate_while_loop(
                 register_tracker.loopup_register(register_index)
             )
             .as_bytes(),
-            format!("\tjle {}\n\n", end_label).as_bytes(),
+            format!("\tjle .{}\n\n", end_label).as_bytes(),
         ],
     );
     register_tracker.release_register(register_index);
@@ -773,8 +815,8 @@ fn generate_while_loop(
     write_vector(
         file,
         vec![
-            format!("\tjmp {}\n", start_label).as_bytes(),
-            format!("{}:\n", end_label).as_bytes(),
+            format!("\tjmp .{}\n", start_label).as_bytes(),
+            format!(".{}:\n", end_label).as_bytes(),
         ],
     );
 }

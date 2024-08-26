@@ -31,6 +31,7 @@ impl EvaluatedExpression {
     fn logical_negate(&self) -> Result<Self, String> {
         match self {
             Self::Bool(value) => Ok(Self::Bool(!value)),
+            Self::Int(value) => Ok(Self::Bool(!(*value > 0))),
             _ => Err("Cannot logically negate expression".to_string()),
         }
     }
@@ -157,6 +158,7 @@ impl EvaluatedExpression {
     fn and(&self, right: Self) -> Result<Self, String> {
         match (self, right) {
             (Self::Bool(left), Self::Bool(right)) => Ok(Self::Bool(*left && right)),
+            (Self::Int(left), Self::Int(right)) => Ok(Self::Bool(*left > 0 && right > 0)),
             _ => Err("Cannot logically negate expression".to_string()),
         }
     }
@@ -164,6 +166,7 @@ impl EvaluatedExpression {
     fn or(&self, right: Self) -> Result<Self, String> {
         match (self, right) {
             (Self::Bool(left), Self::Bool(right)) => Ok(Self::Bool(*left || right)),
+            (Self::Int(left), Self::Int(right)) => Ok(Self::Bool(*left > 0 || right > 0)),
             _ => Err("Cannot logically negate expression".to_string()),
         }
     }
@@ -250,7 +253,7 @@ impl FuncEnv {
             EvaluatedExpression::Continue => {
                 return Err("Invalid continue statement in".to_string())
             }
-            _ => Ok(return_value),
+            _ => Ok(EvaluatedExpression::Null),
         }
     }
 }
@@ -357,7 +360,7 @@ pub fn interpret(ast: Vec<TopLevel>) -> Result<i32, String> {
     match function_env.evaluate_function_call(&"main".to_string(), &None, &mut variable_env) {
         Ok(EvaluatedExpression::Int(exit_code)) if exit_code >= 0 => Ok(exit_code),
         Err(error) => Err(error),
-        return_type => Err(format!("Invalid return type in main: {:?}", return_type)),
+        _ => Ok(0),
     }
 }
 
@@ -513,27 +516,27 @@ fn evaluate_conditional(
 }
 
 fn evaluate_if_statement(
-    if_statement: &Vec<(Expression, Vec<Statement>)>,
+    if_statement: &Vec<(Option<Expression>, Vec<Statement>)>,
     variable_env: &mut VarEnv,
     function_env: &mut FuncEnv,
 ) -> Result<EvaluatedExpression, String> {
     for (condition, code_block) in if_statement {
-        match evaluate_expression(condition, variable_env, function_env) {
-            Ok(EvaluatedExpression::Bool(true)) => {
-                return match evaluate_code_block(code_block, variable_env, function_env) {
-                    Ok(EvaluatedExpression::ReturnValue(return_value)) => {
-                        Ok(EvaluatedExpression::ReturnValue(return_value))
-                    }
-                    Ok(EvaluatedExpression::Break) => Ok(EvaluatedExpression::Break),
-                    Ok(EvaluatedExpression::Continue) => Ok(EvaluatedExpression::Continue),
-                    Err(error) => Err(error),
-                    return_type => Err(format!("Invalid return type, {:?}", return_type)),
+        if let Some(condition) = condition {
+            match evaluate_expression(condition, variable_env, function_env)? {
+                EvaluatedExpression::Bool(true) => {
+                    return evaluate_code_block(code_block, variable_env, function_env)
                 }
+                EvaluatedExpression::Int(value) if value > 0 => {
+                    return evaluate_code_block(code_block, variable_env, function_env)
+                }
+                EvaluatedExpression::Bool(false) => continue,
+                EvaluatedExpression::Int(value) if value <= 0 => {
+                    return evaluate_code_block(code_block, variable_env, function_env)
+                }
+                _ => return Err("Invalid condition".to_string()),
             }
-            Ok(EvaluatedExpression::Bool(false)) => continue,
-            Ok(_) => return Err("Invalid condition".to_string()),
-            Err(error) => return Err(error),
         }
+        return evaluate_code_block(code_block, variable_env, function_env);
     }
 
     Ok(EvaluatedExpression::Null)
@@ -556,17 +559,20 @@ fn evaluate_for_loop(
             match evaluate_expression(condition, variable_env, function_env)? {
                 EvaluatedExpression::Bool(true) => (),
                 EvaluatedExpression::Bool(false) => return Ok(EvaluatedExpression::Null),
+                EvaluatedExpression::Int(value) if value > 0 => (),
+                EvaluatedExpression::Int(value) if value <= 0 => {
+                    return Ok(EvaluatedExpression::Null)
+                }
                 _ => return Err("Invalid exit condition".to_string()),
             }
         }
 
-        match evaluate_code_block(code_block, variable_env, function_env) {
-            Ok(EvaluatedExpression::ReturnValue(value)) => {
+        match evaluate_code_block(code_block, variable_env, function_env)? {
+            EvaluatedExpression::ReturnValue(value) => {
                 return Ok(EvaluatedExpression::ReturnValue(value))
             }
-            Ok(EvaluatedExpression::Break) => return Ok(EvaluatedExpression::Null),
-            Ok(EvaluatedExpression::Continue) => (),
-            Err(error) => return Err(error),
+            EvaluatedExpression::Break => return Ok(EvaluatedExpression::Null),
+            EvaluatedExpression::Continue => (),
             _ => (),
         }
 
@@ -583,10 +589,12 @@ fn evaluate_while_loop(
     function_env: &mut FuncEnv,
 ) -> Result<EvaluatedExpression, String> {
     loop {
-        match evaluate_expression(condition, variable_env, function_env) {
-            Ok(EvaluatedExpression::Bool(true)) => (),
-            Ok(EvaluatedExpression::Bool(false)) => return Ok(EvaluatedExpression::Null),
-            Err(error) => return Err(error),
+        match evaluate_expression(condition, variable_env, function_env)? {
+            EvaluatedExpression::Bool(true) => (),
+            EvaluatedExpression::Bool(false) => return Ok(EvaluatedExpression::Null),
+            EvaluatedExpression::Int(value) if value > 0 => (),
+            EvaluatedExpression::Int(value) if value <= 0 => return Ok(EvaluatedExpression::Null),
+
             _ => return Err("Invalid exit condition".to_string()),
         }
 

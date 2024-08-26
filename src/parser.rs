@@ -31,7 +31,7 @@ pub enum VariableAssignment {
 
 #[derive(Debug, Clone)]
 pub enum Conditional {
-    IfStatement(Vec<(Expression, CodeBlock)>),
+    IfStatement(Vec<(Option<Expression>, CodeBlock)>),
     ForLoop(
         Option<VariableAssignment>,
         Option<Expression>,
@@ -428,9 +428,9 @@ fn parse_variable_definition_declaration(
 
 fn parse_if_statement(
     iterator: &mut ParserIterator,
-) -> Result<Vec<(Expression, CodeBlock)>, String> {
+) -> Result<Vec<(Option<Expression>, CodeBlock)>, String> {
     iterator.next();
-    let mut if_statement: Vec<(Expression, CodeBlock)> = Vec::new();
+    let mut if_statement = Vec::new();
 
     let token = iterator.peek().ok_or("Missing token".to_string())?;
     if token != LexerToken::Symbol(Symbol::LBracket) {
@@ -440,7 +440,7 @@ fn parse_if_statement(
     let condition = parse_grouping(iterator)?;
     let code_block = parse_code_block(iterator)?;
 
-    if_statement.push((condition, code_block));
+    if_statement.push((Some(condition), code_block));
 
     loop {
         let token = iterator.peek().ok_or("Missing token".to_string())?;
@@ -449,7 +449,12 @@ fn parse_if_statement(
         }
         iterator.next();
 
-        let token = iterator.next().ok_or("Missing token".to_string())?;
+        let token = iterator.peek().ok_or("Missing token".to_string())?;
+        if token == LexerToken::Symbol(Symbol::LBrace) {
+            if_statement.push((None, parse_code_block(iterator)?));
+            return Ok(if_statement);
+        }
+        iterator.next();
         if token != LexerToken::Keyword(Keyword::If) {
             return Err(format!("Expected 'if', found {:?}", token));
         }
@@ -459,10 +464,7 @@ fn parse_if_statement(
             return Err(format!("Expected '(', found {:?}", token));
         }
 
-        let condition = parse_grouping(iterator)?;
-        let code_block = parse_code_block(iterator)?;
-
-        if_statement.push((condition, code_block));
+        if_statement.push((Some(parse_grouping(iterator)?), parse_code_block(iterator)?));
     }
 }
 

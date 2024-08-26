@@ -6,8 +6,8 @@ use std::{
 };
 
 #[allow(unused)]
-// mod interpreter;
 mod code_generator;
+//mod interpreter;
 mod lexer;
 mod parser;
 
