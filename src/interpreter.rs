@@ -6,7 +6,7 @@ use crate::parser::{
 };
 
 #[derive(Debug, Clone)]
-enum EvaluatedExpression {
+pub enum EvaluatedExpression {
     Int(i32),
     Bool(bool),
     String(String),
@@ -187,12 +187,12 @@ impl EvaluatedExpression {
 }
 
 #[derive(Debug)]
-struct FuncEnv {
+pub struct FuncEnv {
     env: HashMap<String, (Option<Vec<String>>, Vec<Statement>)>,
 }
 
 impl FuncEnv {
-    fn new() -> Self {
+    pub fn new() -> Self {
         FuncEnv {
             env: HashMap::new(),
         }
@@ -259,16 +259,16 @@ impl FuncEnv {
 }
 
 #[derive(Debug)]
-struct VarEnv {
+pub struct VarEnv {
     env: Vec<HashMap<String, EvaluatedExpression>>,
 }
 
 impl VarEnv {
-    fn new() -> Self {
+    pub fn new() -> Self {
         VarEnv { env: Vec::new() }
     }
 
-    fn add_env(&mut self) {
+    pub fn add_env(&mut self) {
         self.env.push(HashMap::new());
     }
 
@@ -276,7 +276,7 @@ impl VarEnv {
         self.env.pop();
     }
 
-    fn define_variable(
+    pub fn define_variable(
         &mut self,
         identifier: &String,
         inital_value: Option<EvaluatedExpression>,
@@ -610,7 +610,7 @@ fn evaluate_while_loop(
     }
 }
 
-fn evaluate_expression(
+pub fn evaluate_expression(
     expression: &Expression,
     variable_env: &mut VarEnv,
     function_env: &mut FuncEnv,

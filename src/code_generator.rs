@@ -5,9 +5,12 @@ use std::{
     io::{BufWriter, Write},
 };
 
-use crate::parser::{
-    ASTLiteral, ASTType, BinaryOperator, Conditional, Expression, Statement, TopLevel,
-    UnaryOperator, VariableAssignment,
+use crate::{
+    interpreter::{evaluate_expression, FuncEnv, VarEnv},
+    parser::{
+        ASTLiteral, ASTType, BinaryOperator, Conditional, Expression, Statement, TopLevel,
+        UnaryOperator, VariableAssignment,
+    },
 };
 
 struct LocalSymbolsTable {
@@ -146,9 +149,9 @@ pub fn generate_code(ast: Vec<TopLevel>) -> Result<(), String> {
 
     let (global_variables, functions) = extract_top_level(ast);
 
-    generate_preamble(&mut file, global_variables);
+    let mut global_variables = generate_preamble(&mut file, global_variables);
 
-    generate_code_from_ast(&mut file, functions);
+    generate_code_from_ast(&mut file, &mut global_variables, functions);
 
     Ok(())
 }
@@ -173,15 +176,15 @@ fn extract_top_level(ast: Vec<TopLevel>) -> (Vec<TopLevel>, Vec<TopLevel>) {
     (global_variables, functions)
 }
 
-fn generate_preamble(file: &mut BufWriter<File>, global_variables: Vec<TopLevel>) {
-    let mut data_section: Vec<&[u8]> = vec![
+fn generate_preamble(file: &mut BufWriter<File>, global_variables: Vec<TopLevel>) -> Vec<String> {
+    let mut data_section: Vec<String> = vec![
         "section .data\n",
         "\tint_format db \"%d\", 10, 0\n",
         "\tstring_format db \"%s\", 10, 0\n",
         "\tchar_format db \"%c\", 10, 0\n\n",
     ]
     .iter()
-    .map(|s| s.as_bytes())
+    .map(|s| s.to_string())
     .collect();
 
     let mut bss_section = vec!["section .bss\n".to_string()];
@@ -200,29 +203,58 @@ fn generate_preamble(file: &mut BufWriter<File>, global_variables: Vec<TopLevel>
     .map(|s| s.to_string())
     .collect();
 
+    let mut global_variables_list = Vec::new();
+
+    let mut variable_env = VarEnv::new();
+    variable_env.add_env();
+    let mut function_env = FuncEnv::new();
+
     for variable in global_variables {
         match variable {
             TopLevel::Function(_, _, _, _) => todo!("Should never be reached"),
-            TopLevel::VariableDefinition(_, identifier, value) => match value {
-                Some(value) => {
-                    todo!("Implement defined global variables")
-                    //data_section.push(&format!("\t{} dd {}\n", identifier, value).to_string())
-                }
-                None => bss_section.push(format!("\t{} resd 1\n", identifier).to_string()),
-            },
+            TopLevel::VariableDefinition(_, identifier, value) => {
+                match value {
+                    Some(expression) => {
+                        let final_value = match evaluate_expression(
+                            &expression,
+                            &mut variable_env,
+                            &mut function_env,
+                        ) {
+                            Ok(value) => value,
+                            Err(error) => {
+                                println!("Add error handling {:?}", error);
+                                todo!();
+                            }
+                        };
+                        variable_env.define_variable(&identifier, Some(final_value));
+
+                        let final_value = 2;
+                        data_section
+                            .push(format!("\t{} dd {}\n", identifier, final_value).to_string())
+                    }
+                    None => bss_section.push(format!("\t{} resd 1\n", identifier).to_string()),
+                };
+                global_variables_list.push(identifier);
+            }
         }
     }
 
     // TODO: Global defined variables
 
-    write_vector(file, data_section);
+    write_vector(file, data_section.iter().map(|s| s.as_bytes()).collect());
     file.write_all("\n".as_bytes());
     write_vector(file, bss_section.iter().map(|s| s.as_bytes()).collect());
     file.write_all("\n".as_bytes());
     write_vector(file, text_section.iter().map(|s| s.as_bytes()).collect());
+
+    global_variables_list
 }
 
-fn generate_code_from_ast(file: &mut BufWriter<File>, ast: Vec<TopLevel>) {
+fn generate_code_from_ast(
+    file: &mut BufWriter<File>,
+    global_variables: &mut Vec<String>,
+    ast: Vec<TopLevel>,
+) {
     let mut register_tracker = RegisterTracker::new();
     let mut label_tracker = LabelTracker::new();
 
@@ -233,6 +265,7 @@ fn generate_code_from_ast(file: &mut BufWriter<File>, ast: Vec<TopLevel>) {
                     file,
                     &mut register_tracker,
                     &mut label_tracker,
+                    global_variables,
                     &return_type,
                     &identifier,
                     &parameters,
@@ -250,6 +283,7 @@ fn generate_function(
     file: &mut BufWriter<File>,
     register_tracker: &mut RegisterTracker,
     label_tracker: &mut LabelTracker,
+    global_variables: &mut Vec<String>,
     return_type: &ASTType,
     identifier: &String,
     parameters: &Option<Vec<(ASTType, String)>>,
@@ -302,6 +336,7 @@ fn generate_function(
         file,
         register_tracker,
         label_tracker,
+        global_variables,
         &mut symbols_table,
         code_block,
     );
@@ -367,6 +402,7 @@ fn generate_code_block(
     file: &mut BufWriter<File>,
     register_tracker: &mut RegisterTracker,
     label_tracker: &mut LabelTracker,
+    global_variables: &mut Vec<String>,
     symbols_table: &mut LocalSymbolsTable,
     code_block: &Vec<Statement>,
 ) {
@@ -376,6 +412,7 @@ fn generate_code_block(
                 file,
                 register_tracker,
                 label_tracker,
+                global_variables,
                 symbols_table,
                 identifier,
                 arguements,
@@ -385,6 +422,7 @@ fn generate_code_block(
                     file,
                     register_tracker,
                     label_tracker,
+                    global_variables,
                     symbols_table,
                     variable_assignment,
                 )
@@ -393,6 +431,7 @@ fn generate_code_block(
                 file,
                 register_tracker,
                 label_tracker,
+                global_variables,
                 symbols_table,
                 conditional,
             ),
@@ -402,6 +441,7 @@ fn generate_code_block(
                     file,
                     register_tracker,
                     label_tracker,
+                    global_variables,
                     symbols_table,
                     code_block,
                 );
@@ -412,6 +452,7 @@ fn generate_code_block(
                     file,
                     register_tracker,
                     label_tracker,
+                    global_variables,
                     symbols_table,
                     expression,
                 );
@@ -447,6 +488,7 @@ fn generate_function_call(
     file: &mut BufWriter<File>,
     register_tracker: &mut RegisterTracker,
     label_tracker: &mut LabelTracker,
+    global_variables: &mut Vec<String>,
     symbols_table: &mut LocalSymbolsTable,
     identifier: &String,
     arguements: &Option<Vec<Expression>>,
@@ -461,6 +503,7 @@ fn generate_function_call(
                 file,
                 register_tracker,
                 label_tracker,
+                global_variables,
                 symbols_table,
                 &arguements[index],
             );
@@ -523,6 +566,7 @@ fn generate_variable_definition_assignment(
     file: &mut BufWriter<File>,
     register_tracker: &mut RegisterTracker,
     label_tracker: &mut LabelTracker,
+    global_variables: &mut Vec<String>,
     symbols_table: &mut LocalSymbolsTable,
     variable_assignment: &VariableAssignment,
 ) {
@@ -532,6 +576,7 @@ fn generate_variable_definition_assignment(
                 file,
                 register_tracker,
                 label_tracker,
+                global_variables,
                 symbols_table,
                 identifier,
                 initial_expression,
@@ -541,6 +586,7 @@ fn generate_variable_definition_assignment(
             file,
             register_tracker,
             label_tracker,
+            global_variables,
             symbols_table,
             identifier,
             expression,
@@ -552,6 +598,7 @@ fn generate_variable_definition(
     file: &mut BufWriter<File>,
     register_tracker: &mut RegisterTracker,
     label_tracker: &mut LabelTracker,
+    global_variables: &mut Vec<String>,
     symbols_table: &mut LocalSymbolsTable,
     identifier: &String,
     initial_expression: &Option<Expression>,
@@ -563,6 +610,7 @@ fn generate_variable_definition(
             file,
             register_tracker,
             label_tracker,
+            global_variables,
             symbols_table,
             identifier,
             expression,
@@ -574,6 +622,7 @@ fn generate_variable_assignment(
     file: &mut BufWriter<File>,
     register_tracker: &mut RegisterTracker,
     label_tracker: &mut LabelTracker,
+    global_variables: &mut Vec<String>,
     symbols_table: &mut LocalSymbolsTable,
     identifier: &String,
     expression: &Expression,
@@ -582,13 +631,20 @@ fn generate_variable_assignment(
         file,
         register_tracker,
         label_tracker,
+        global_variables,
         symbols_table,
         expression,
     );
 
     let pointer = match symbols_table.get(identifier) {
         Some(pointer) => pointer,
-        None => todo!("Implement error handling"),
+        None => {
+            if global_variables.contains(identifier) {
+                identifier.to_string()
+            } else {
+                todo!("Add error handling")
+            }
+        }
     };
 
     file.write_all(
@@ -606,6 +662,7 @@ fn generate_conditional(
     file: &mut BufWriter<File>,
     register_tracker: &mut RegisterTracker,
     label_tracker: &mut LabelTracker,
+    global_variables: &mut Vec<String>,
     symbols_table: &mut LocalSymbolsTable,
     conditional: &Conditional,
 ) {
@@ -614,6 +671,7 @@ fn generate_conditional(
             file,
             register_tracker,
             label_tracker,
+            global_variables,
             symbols_table,
             if_statement,
         ),
@@ -626,6 +684,7 @@ fn generate_conditional(
             file,
             register_tracker,
             label_tracker,
+            global_variables,
             symbols_table,
             initial_statement,
             exit_condition,
@@ -636,6 +695,7 @@ fn generate_conditional(
             file,
             register_tracker,
             label_tracker,
+            global_variables,
             symbols_table,
             condition,
             code_block,
@@ -647,6 +707,7 @@ fn generate_if_statement(
     file: &mut BufWriter<File>,
     register_tracker: &mut RegisterTracker,
     label_tracker: &mut LabelTracker,
+    global_variables: &mut Vec<String>,
     symbols_table: &mut LocalSymbolsTable,
     if_statement: &Vec<(Option<Expression>, Vec<Statement>)>,
 ) {
@@ -665,6 +726,7 @@ fn generate_if_statement(
                 file,
                 register_tracker,
                 label_tracker,
+                global_variables,
                 symbols_table,
                 expression,
             );
@@ -686,6 +748,7 @@ fn generate_if_statement(
             file,
             register_tracker,
             label_tracker,
+            global_variables,
             symbols_table,
             code_block,
         );
@@ -699,6 +762,7 @@ fn generate_for_loop(
     file: &mut BufWriter<File>,
     register_tracker: &mut RegisterTracker,
     label_tracker: &mut LabelTracker,
+    global_variables: &mut Vec<String>,
     symbols_table: &mut LocalSymbolsTable,
     initial_statement: &Option<VariableAssignment>,
     exit_condition: &Option<Expression>,
@@ -713,6 +777,7 @@ fn generate_for_loop(
             file,
             register_tracker,
             label_tracker,
+            global_variables,
             symbols_table,
             initial_statement,
         );
@@ -725,6 +790,7 @@ fn generate_for_loop(
             file,
             register_tracker,
             label_tracker,
+            global_variables,
             symbols_table,
             exit_condition,
         );
@@ -747,6 +813,7 @@ fn generate_for_loop(
         file,
         register_tracker,
         label_tracker,
+        global_variables,
         symbols_table,
         code_block,
     );
@@ -756,6 +823,7 @@ fn generate_for_loop(
             file,
             register_tracker,
             label_tracker,
+            global_variables,
             symbols_table,
             continuous_expression,
         );
@@ -774,6 +842,7 @@ fn generate_while_loop(
     file: &mut BufWriter<File>,
     register_tracker: &mut RegisterTracker,
     label_tracker: &mut LabelTracker,
+    global_variables: &mut Vec<String>,
     symbols_table: &mut LocalSymbolsTable,
     condition: &Expression,
     code_block: &Vec<Statement>,
@@ -787,6 +856,7 @@ fn generate_while_loop(
         file,
         register_tracker,
         label_tracker,
+        global_variables,
         symbols_table,
         condition,
     );
@@ -808,6 +878,7 @@ fn generate_while_loop(
         file,
         register_tracker,
         label_tracker,
+        global_variables,
         symbols_table,
         code_block,
     );
@@ -825,6 +896,7 @@ fn generate_expression(
     file: &mut BufWriter<File>,
     register_tracker: &mut RegisterTracker,
     label_tracker: &mut LabelTracker,
+    global_variables: &mut Vec<String>,
     symbols_table: &mut LocalSymbolsTable,
     expression: &Expression,
 ) -> usize {
@@ -833,6 +905,7 @@ fn generate_expression(
             file,
             register_tracker,
             label_tracker,
+            global_variables,
             symbols_table,
             operator,
             left,
@@ -841,6 +914,7 @@ fn generate_expression(
             file,
             register_tracker,
             label_tracker,
+            global_variables,
             symbols_table,
             left,
             operator,
@@ -849,32 +923,19 @@ fn generate_expression(
         Expression::Literal(literal) => {
             generate_literal(file, register_tracker, symbols_table, literal)
         }
-        Expression::Variable(identifier) => {
-            let register_index = match register_tracker.claim_register() {
-                Ok(register_index) => register_index,
-                Err(_) => todo!("Add error handling"),
-            };
-
-            let pointer = match symbols_table.get(identifier) {
-                Some(pointer) => pointer,
-                None => todo!("Add error handling"),
-            };
-
-            file.write_all(
-                format!(
-                    "\tmov {}, [{}]\n",
-                    register_tracker.loopup_register(register_index),
-                    pointer,
-                )
-                .as_bytes(),
-            );
-            return register_index;
-        }
+        Expression::Variable(identifier) => load_variable(
+            file,
+            register_tracker,
+            global_variables,
+            symbols_table,
+            identifier,
+        ),
         Expression::FunctionCall(identifier, arguements) => {
             generate_function_call(
                 file,
                 register_tracker,
                 label_tracker,
+                global_variables,
                 symbols_table,
                 identifier,
                 arguements,
@@ -898,6 +959,7 @@ fn generate_expression(
             file,
             register_tracker,
             label_tracker,
+            global_variables,
             symbols_table,
             expression,
         ),
@@ -908,12 +970,19 @@ fn generate_unary_expression(
     file: &mut BufWriter<File>,
     register_tracker: &mut RegisterTracker,
     label_tracker: &mut LabelTracker,
+    global_variables: &mut Vec<String>,
     symbols_table: &mut LocalSymbolsTable,
     operator: &UnaryOperator,
     left: &Expression,
 ) -> usize {
-    let register_index =
-        generate_expression(file, register_tracker, label_tracker, symbols_table, left);
+    let register_index = generate_expression(
+        file,
+        register_tracker,
+        label_tracker,
+        global_variables,
+        symbols_table,
+        left,
+    );
     match operator {
         UnaryOperator::Negation => {
             file.write_all(
@@ -958,15 +1027,28 @@ fn generate_binary_expression(
     file: &mut BufWriter<File>,
     register_tracker: &mut RegisterTracker,
     label_tracker: &mut LabelTracker,
+    global_variables: &mut Vec<String>,
     symbols_table: &mut LocalSymbolsTable,
     left: &Expression,
     operator: &BinaryOperator,
     right: &Expression,
 ) -> usize {
-    let left_index =
-        generate_expression(file, register_tracker, label_tracker, symbols_table, left);
-    let right_index =
-        generate_expression(file, register_tracker, label_tracker, symbols_table, right);
+    let left_index = generate_expression(
+        file,
+        register_tracker,
+        label_tracker,
+        global_variables,
+        symbols_table,
+        left,
+    );
+    let right_index = generate_expression(
+        file,
+        register_tracker,
+        label_tracker,
+        global_variables,
+        symbols_table,
+        right,
+    );
 
     match operator {
         BinaryOperator::Add => {
@@ -1256,6 +1338,40 @@ fn generate_literal(
         ASTLiteral::Int(value) => generate_load_int_literal(file, register_tracker, *value),
         _ => todo!("Implement other literals"),
     }
+}
+
+fn load_variable(
+    file: &mut BufWriter<File>,
+    register_tracker: &mut RegisterTracker,
+    global_variables: &Vec<String>,
+    symbols_table: &mut LocalSymbolsTable,
+    identifier: &String,
+) -> usize {
+    let register_index = match register_tracker.claim_register() {
+        Ok(register_index) => register_index,
+        Err(_) => todo!("Add error handling"),
+    };
+
+    let pointer = match symbols_table.get(identifier) {
+        Some(pointer) => pointer,
+        None => {
+            if global_variables.contains(identifier) {
+                identifier.to_string()
+            } else {
+                todo!("Add error handling")
+            }
+        }
+    };
+
+    file.write_all(
+        format!(
+            "\tmov {}, [{}]\n",
+            register_tracker.loopup_register(register_index),
+            pointer,
+        )
+        .as_bytes(),
+    );
+    return register_index;
 }
 
 fn generate_load_int_literal(

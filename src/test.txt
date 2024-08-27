@@ -1,3 +1,14 @@
+int x = 2;
+int y = x;
+
+int main() {
+	x = x + 2;
+	printf(x);
+	printf(y);
+}
+
+
+/*
 int main(int argc, char argv) {
 	printf(do_something());
 	printf(add(1, 2));
@@ -8,13 +19,11 @@ int do_something() {
 	int x = -1;
 	while (x < 10) {
 		x = x + 1;
-		/*if (x == 6) {
+		if (x == 6) {
 			break;
 		} else if (x == 2) {
 			continue;
 		}
-		*/
-
 
 		printf(x);
 	}
@@ -33,3 +42,4 @@ int mul(int x, int y) {
 	}
 	return result;
 }
+*/

@@ -66,7 +66,6 @@ fn main() {
     };
 
     if cli.compiler_selected {
-        println!("Compiler has been selected");
         match code_generator::generate_code(ast) {
             Ok(()) => (),
             Err(error) => {
@@ -75,7 +74,6 @@ fn main() {
             }
         }
     } else if cli.interpreter_selected {
-        println!("Interpreter has been selected");
         match interpreter::interpret(ast) {
             Ok(exit_code) => exit(exit_code),
             Err(error) => {
