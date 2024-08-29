@@ -350,6 +350,8 @@ fn generate_function(
         &mut symbols_table,
         identifier == "main",
         code_block,
+        None,
+        None,
     );
 
     file.write_all("\n\tmov rsp, rbp\n\n".as_bytes());
@@ -412,6 +414,8 @@ fn generate_code_block(
     symbols_table: &mut LocalSymbolsTable,
     in_main: bool,
     code_block: &Vec<Statement>,
+    continue_label: Option<&String>,
+    break_label: Option<&String>,
 ) -> Result<(), String> {
     for statement in code_block {
         match statement {
@@ -442,6 +446,8 @@ fn generate_code_block(
                 symbols_table,
                 in_main,
                 conditional,
+                continue_label,
+                break_label,
             )?,
             Statement::CodeBlock(code_block) => {
                 symbols_table.add_env();
@@ -453,46 +459,73 @@ fn generate_code_block(
                     symbols_table,
                     in_main,
                     code_block,
-                );
+                    continue_label,
+                    break_label,
+                )?;
                 symbols_table.remove_env();
             }
-            Statement::Return(expression) => {
-                let register_index = generate_expression(
-                    file,
-                    register_tracker,
-                    label_tracker,
-                    global_variables,
-                    symbols_table,
-                    expression,
-                )?;
-
-                file.write_all(
-                    format!(
-                        "\tmov eax, {}\n",
-                        register_tracker.loopup_register(register_index)
-                    )
-                    .as_bytes(),
-                );
-
-                file.write_all("\n\tmov rsp, rbp\n\n".as_bytes());
-                if !in_main {
-                    write_vector(
-                        file,
-                        vec![
-                            "\tpop r15\n".as_bytes(),
-                            "\tpop r14\n".as_bytes(),
-                            "\tpop r13\n".as_bytes(),
-                            "\tpop r12\n".as_bytes(),
-                        ],
-                    );
-                }
-                write_vector(file, vec!["\tpop rbp\n".as_bytes(), "\tret\n".as_bytes()]);
-            }
-            Statement::Break => todo!("Break"),
-            Statement::Continue => todo!("Continue"),
+            Statement::Return(expression) => generate_return(
+                file,
+                register_tracker,
+                label_tracker,
+                global_variables,
+                symbols_table,
+                in_main,
+                expression,
+            )?,
+            Statement::Break => generate_break(
+                file,
+                register_tracker,
+                label_tracker,
+                global_variables,
+                symbols_table,
+                break_label,
+            )?,
+            Statement::Continue => generate_continue(
+                file,
+                register_tracker,
+                label_tracker,
+                global_variables,
+                symbols_table,
+                continue_label,
+            )?,
         }
     }
     Ok(())
+}
+
+fn generate_break(
+    file: &mut BufWriter<File>,
+    register_tracker: &mut RegisterTracker,
+    label_tracker: &mut LabelTracker,
+    global_variables: &[String],
+    symbols_table: &mut LocalSymbolsTable,
+    break_label: Option<&String>,
+) -> Result<(), String> {
+    match break_label {
+        Some(label) => {
+            file.write_all(format!("\tjmp .{}\n", label).as_bytes());
+            Ok(())
+        }
+        None => Err(format!("Invalid break statement, not in a loop")),
+    }
+}
+
+fn generate_continue(
+    file: &mut BufWriter<File>,
+    register_tracker: &mut RegisterTracker,
+    label_tracker: &mut LabelTracker,
+    global_variables: &[String],
+    symbols_table: &mut LocalSymbolsTable,
+    continue_label: Option<&String>,
+) -> Result<(), String> {
+    match continue_label {
+        Some(label) => {
+            file.write_all(format!("\tjmp .{}\n", label).as_bytes());
+            Ok(())
+        }
+        None => Err(format!("Invalid break statement, not in a loop")),
+    }
 }
 
 fn generate_function_call(
@@ -681,6 +714,8 @@ fn generate_conditional(
     symbols_table: &mut LocalSymbolsTable,
     in_main: bool,
     conditional: &Conditional,
+    continue_label: Option<&String>,
+    break_label: Option<&String>,
 ) -> Result<(), String> {
     match conditional {
         Conditional::IfStatement(if_statement) => generate_if_statement(
@@ -691,6 +726,8 @@ fn generate_conditional(
             symbols_table,
             in_main,
             if_statement,
+            continue_label,
+            break_label,
         ),
         Conditional::ForLoop(
             initial_statement,
@@ -730,6 +767,8 @@ fn generate_if_statement(
     symbols_table: &mut LocalSymbolsTable,
     in_main: bool,
     if_statement: &Vec<(Option<Expression>, Vec<Statement>)>,
+    continue_label: Option<&String>,
+    break_label: Option<&String>,
 ) -> Result<(), String> {
     let mut labels = Vec::new();
     for index in 0..if_statement.len() {
@@ -772,6 +811,8 @@ fn generate_if_statement(
             symbols_table,
             in_main,
             code_block,
+            continue_label,
+            break_label,
         );
 
         file.write_all(format!("\tjmp .{}\n", labels.last().unwrap()).as_bytes());
@@ -793,6 +834,7 @@ fn generate_for_loop(
     code_block: &Vec<Statement>,
 ) -> Result<(), String> {
     let start_label = label_tracker.add_label();
+    let continue_label = label_tracker.add_label();
     let end_label = label_tracker.add_label();
 
     if let Some(initial_statement) = initial_statement {
@@ -840,7 +882,11 @@ fn generate_for_loop(
         symbols_table,
         in_main,
         code_block,
+        Some(&continue_label),
+        Some(&end_label),
     );
+
+    file.write_all(format!(".{}:\n", continue_label).as_bytes());
 
     if let Some(continuous_expression) = continuous_expression {
         generate_variable_definition_assignment(
@@ -908,6 +954,8 @@ fn generate_while_loop(
         symbols_table,
         in_main,
         code_block,
+        Some(&start_label),
+        Some(&end_label),
     );
 
     write_vector(
@@ -917,6 +965,48 @@ fn generate_while_loop(
             format!(".{}:\n", end_label).as_bytes(),
         ],
     );
+    Ok(())
+}
+
+fn generate_return(
+    file: &mut BufWriter<File>,
+    register_tracker: &mut RegisterTracker,
+    label_tracker: &mut LabelTracker,
+    global_variables: &mut Vec<String>,
+    symbols_table: &mut LocalSymbolsTable,
+    in_main: bool,
+    expression: &Expression,
+) -> Result<(), String> {
+    let register_index = generate_expression(
+        file,
+        register_tracker,
+        label_tracker,
+        global_variables,
+        symbols_table,
+        expression,
+    )?;
+
+    file.write_all(
+        format!(
+            "\tmov eax, {}\n",
+            register_tracker.loopup_register(register_index)
+        )
+        .as_bytes(),
+    );
+
+    file.write_all("\n\tmov rsp, rbp\n\n".as_bytes());
+    if !in_main {
+        write_vector(
+            file,
+            vec![
+                "\tpop r15\n".as_bytes(),
+                "\tpop r14\n".as_bytes(),
+                "\tpop r13\n".as_bytes(),
+                "\tpop r12\n".as_bytes(),
+            ],
+        );
+        write_vector(file, vec!["\tpop rbp\n".as_bytes(), "\tret\n".as_bytes()]);
+    }
     Ok(())
 }
 
