@@ -151,7 +151,7 @@ pub fn generate_code(ast: Vec<TopLevel>) -> Result<(), String> {
 
     let mut global_variables = generate_preamble(&mut file, global_variables)?;
 
-    generate_code_from_ast(&mut file, &mut global_variables, functions);
+    generate_code_from_ast(&mut file, &mut global_variables, functions)?;
 
     Ok(())
 }
@@ -325,8 +325,14 @@ fn generate_function(
         file.write_all(format!("\tsub rsp, {}\n\n", local_variable_size).as_bytes());
     }
 
-    let parameter_registers = vec!["edi", "esi", "edx", "ecx", "r8d", "r9d"];
+    let parameter_registers = vec!["edi", "esi", "edx", "ecx"];
     if let Some(parameters) = parameters {
+        if parameters.len() > 4 {
+            return Err(
+                "Current compiler version doesn't support more than 4 parameters".to_string(),
+            );
+        }
+
         for index in 0..parameters.len() {
             let (_, identifier) = &parameters[index];
             symbols_table.register_local_variable(identifier, 4);
@@ -375,8 +381,6 @@ fn calc_stack_size(
     code_block: &Vec<Statement>,
 ) -> i32 {
     let mut total = 0;
-
-    // TODO: Introduce different sized types, everything assumed integer 4 bytes
 
     for statement in code_block {
         match statement {
@@ -537,11 +541,17 @@ fn generate_function_call(
     identifier: &String,
     arguements: &Option<Vec<Expression>>,
 ) -> Result<(), String> {
-    let arguement_registers = vec!["edi", "esi", "edx", "ecx", "r8d", "r9d"];
+    let arguement_registers = vec!["edi", "esi", "edx", "ecx"];
     let mut arguement_pointers = Vec::new();
     let mut parameter_size = 0;
 
     if let Some(arguements) = arguements {
+        if arguements.len() > 4 {
+            return Err(
+                "Current compiler version doesn't support more than 4 arguements".to_string(),
+            );
+        }
+
         for index in 0..arguements.len() {
             let register_index = generate_expression(
                 file,
@@ -590,10 +600,6 @@ fn generate_function_call(
 
     symbols_table.increase_pointer(parameter_size);
     file.write_all(format!("\tadd rsp, {}\n", parameter_size).as_bytes());
-
-    // ISSUE: Problem may arise when using r8 and r9 for paramters if being used for operations
-    // Potential solve: if r8 and r9 are being used move them to the stack and record that in
-    // register_tracker
 
     write_vector(
         file,
@@ -1451,7 +1457,7 @@ fn generate_literal(
 ) -> Result<usize, String> {
     match literal {
         ASTLiteral::Int(value) => generate_load_int_literal(file, register_tracker, *value),
-        _ => todo!("Implement other literals"),
+        _ => Err("Data type not supported".to_string()),
     }
 }
 
