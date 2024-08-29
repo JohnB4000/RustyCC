@@ -2,9 +2,12 @@ int x = 2;
 int y = x;
 
 int main() {
-	x = x + 2;
-	printf(x);
-	printf(y);
+	printf(add(x, y));
+	return 0;
+}
+
+int add(int x, int y) {
+	return x + y;
 }
 
 
