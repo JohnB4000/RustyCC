@@ -211,13 +211,21 @@ impl FuncEnv {
         &mut self,
         identifier: &String,
         arguements: &Option<Vec<Expression>>,
-        variable_env: &mut VarEnv,
+        global_variable_env: &mut VarEnv,
+        local_variable_env: &mut VarEnv,
     ) -> Result<EvaluatedExpression, String> {
         let evaluated_arguements = match arguements {
             Some(arguements) => Some(
                 arguements
                     .iter()
-                    .map(|expression| evaluate_expression(expression, variable_env, self))
+                    .map(|expression| {
+                        evaluate_expression(
+                            expression,
+                            global_variable_env,
+                            local_variable_env,
+                            self,
+                        )
+                    })
                     .collect::<Result<Vec<EvaluatedExpression>, String>>()?,
             ),
             None => None,
@@ -228,8 +236,8 @@ impl FuncEnv {
             None => return Err(format!("Function '{:?}' not defined", identifier)),
         };
 
-        let mut variable_env = VarEnv::new();
-        variable_env.add_env();
+        let mut local_variable_env = VarEnv::new();
+        local_variable_env.add_env();
 
         match (parameters, evaluated_arguements) {
             (Some(parameters), Some(arguements)) => {
@@ -237,15 +245,20 @@ impl FuncEnv {
                     if let EvaluatedExpression::DefaultValue = arguement {
                         return Err("Failure while trying to interpret arguements".to_string());
                     }
-                    variable_env.define_variable(parameter, Some(arguement.clone()))?;
+                    local_variable_env.define_variable(parameter, Some(arguement.clone()))?;
                 }
             }
             _ => (),
         }
 
-        let return_value = evaluate_code_block(&code_block.to_vec(), &mut variable_env, self)?;
+        let return_value = evaluate_code_block(
+            &code_block.to_vec(),
+            global_variable_env,
+            &mut local_variable_env,
+            self,
+        )?;
 
-        variable_env.remove_env();
+        local_variable_env.remove_env();
 
         match return_value {
             EvaluatedExpression::ReturnValue(return_value) => Ok(*return_value),
@@ -323,8 +336,10 @@ impl VarEnv {
 }
 
 pub fn interpret(ast: Vec<TopLevel>) -> Result<i32, String> {
-    let mut variable_env = VarEnv::new();
-    variable_env.add_env();
+    let mut global_variable_env = VarEnv::new();
+    global_variable_env.add_env();
+    let mut local_variable_env = VarEnv::new();
+    local_variable_env.add_env();
     let mut function_env = FuncEnv::new();
 
     for top_level in ast {
@@ -344,20 +359,29 @@ pub fn interpret(ast: Vec<TopLevel>) -> Result<i32, String> {
             TopLevel::VariableDefinition(_, identifier, expression) => {
                 let expression = match expression {
                     Some(expression) => {
-                        match evaluate_expression(&expression, &mut variable_env, &mut function_env)
-                        {
+                        match evaluate_expression(
+                            &expression,
+                            &mut global_variable_env,
+                            &mut local_variable_env,
+                            &mut function_env,
+                        ) {
                             Ok(expression) => Some(expression),
                             Err(error) => return Err(error),
                         }
                     }
                     None => None,
                 };
-                variable_env.define_variable(&identifier, expression)?;
+                global_variable_env.define_variable(&identifier, expression)?;
             }
         }
     }
 
-    match function_env.evaluate_function_call(&"main".to_string(), &None, &mut variable_env) {
+    match function_env.evaluate_function_call(
+        &"main".to_string(),
+        &None,
+        &mut global_variable_env,
+        &mut local_variable_env,
+    ) {
         Ok(EvaluatedExpression::Int(exit_code)) if exit_code >= 0 => Ok(exit_code),
         Err(error) => Err(error),
         _ => Ok(0),
@@ -366,28 +390,49 @@ pub fn interpret(ast: Vec<TopLevel>) -> Result<i32, String> {
 
 fn evaluate_code_block(
     code_block: &Vec<Statement>,
-    variable_env: &mut VarEnv,
+    global_variable_env: &mut VarEnv,
+    local_variable_env: &mut VarEnv,
     function_env: &mut FuncEnv,
 ) -> Result<EvaluatedExpression, String> {
-    variable_env.add_env();
+    local_variable_env.add_env();
 
     for statement in code_block {
         let return_value = match statement {
-            Statement::FunctionCall(identifier, arguements) => {
-                evaluate_function_call(identifier, arguements, variable_env, function_env)?
-            }
-            Statement::VariableAssignment(variable_assignment) => {
-                evaluate_variable_assignment(&variable_assignment, variable_env, function_env)?
-            }
-            Statement::Conditional(conditional) => {
-                evaluate_conditional(&conditional, variable_env, function_env)?
-            }
+            Statement::FunctionCall(identifier, arguements) => evaluate_function_call(
+                identifier,
+                arguements,
+                global_variable_env,
+                local_variable_env,
+                function_env,
+            )?,
+            Statement::VariableAssignment(variable_assignment) => evaluate_variable_assignment(
+                &variable_assignment,
+                global_variable_env,
+                local_variable_env,
+                function_env,
+            )?,
+            Statement::Conditional(conditional) => evaluate_conditional(
+                &conditional,
+                global_variable_env,
+                local_variable_env,
+                function_env,
+            )?,
             Statement::CodeBlock(code_block) => {
-                return evaluate_code_block(code_block, variable_env, function_env);
+                return evaluate_code_block(
+                    code_block,
+                    global_variable_env,
+                    local_variable_env,
+                    function_env,
+                );
             }
-            Statement::Return(return_value) => EvaluatedExpression::ReturnValue(Box::new(
-                evaluate_expression(return_value, variable_env, function_env)?,
-            )),
+            Statement::Return(return_value) => {
+                EvaluatedExpression::ReturnValue(Box::new(evaluate_expression(
+                    return_value,
+                    global_variable_env,
+                    local_variable_env,
+                    function_env,
+                )?))
+            }
             Statement::Break => return Ok(EvaluatedExpression::Break),
             Statement::Continue => return Ok(EvaluatedExpression::Continue),
         };
@@ -395,38 +440,57 @@ fn evaluate_code_block(
             EvaluatedExpression::ReturnValue(_)
             | EvaluatedExpression::Break
             | EvaluatedExpression::Continue => {
-                variable_env.remove_env();
+                local_variable_env.remove_env();
                 return Ok(return_value);
             }
             _ => (),
         }
     }
 
-    variable_env.remove_env();
+    local_variable_env.remove_env();
     Ok(EvaluatedExpression::Null)
 }
 
 fn evaluate_function_call(
     identifier: &String,
     arguements: &Option<Vec<Expression>>,
-    variable_env: &mut VarEnv,
+    global_variable_env: &mut VarEnv,
+    local_variable_env: &mut VarEnv,
     function_env: &mut FuncEnv,
 ) -> Result<EvaluatedExpression, String> {
     match identifier.as_str() {
-        "printf" => evaluate_print_statement(arguements, variable_env, function_env),
-        _ => function_env.evaluate_function_call(identifier, arguements, variable_env),
+        "printf" => evaluate_print_statement(
+            arguements,
+            global_variable_env,
+            local_variable_env,
+            function_env,
+        ),
+        _ => function_env.evaluate_function_call(
+            identifier,
+            arguements,
+            global_variable_env,
+            local_variable_env,
+        ),
     }
 }
 
 fn evaluate_print_statement(
     arguements: &Option<Vec<Expression>>,
-    variable_env: &mut VarEnv,
+    global_variable_env: &mut VarEnv,
+    local_variable_env: &mut VarEnv,
     function_env: &mut FuncEnv,
 ) -> Result<EvaluatedExpression, String> {
     let evaluated_arguements = match arguements {
         Some(arguements) => arguements
             .iter()
-            .map(|expression| evaluate_expression(expression, variable_env, function_env))
+            .map(|expression| {
+                evaluate_expression(
+                    expression,
+                    global_variable_env,
+                    local_variable_env,
+                    function_env,
+                )
+            })
             .collect::<Result<Vec<EvaluatedExpression>, String>>(),
         None => return Ok(EvaluatedExpression::Null),
     }?;
@@ -462,40 +526,57 @@ fn evaluate_print_statement(
 
 fn evaluate_variable_assignment(
     variable_assignment: &VariableAssignment,
-    variable_env: &mut VarEnv,
+    global_variable_env: &mut VarEnv,
+    local_variable_env: &mut VarEnv,
     function_env: &mut FuncEnv,
 ) -> Result<EvaluatedExpression, String> {
     match variable_assignment {
         VariableAssignment::Definition(_, identifier, expression) => {
             match expression
                 .as_ref()
-                .map(|expression| evaluate_expression(&expression, variable_env, function_env))
+                .map(|expression| {
+                    evaluate_expression(
+                        &expression,
+                        global_variable_env,
+                        local_variable_env,
+                        function_env,
+                    )
+                })
                 .transpose()
             {
-                Ok(expression) => variable_env.define_variable(identifier, expression),
+                Ok(expression) => local_variable_env.define_variable(identifier, expression),
                 Err(error) => Err(error),
             }
         }
 
         VariableAssignment::Assignment(identifier, expression) => {
-            let expression = match evaluate_expression(expression, variable_env, function_env) {
+            let expression = match evaluate_expression(
+                expression,
+                global_variable_env,
+                local_variable_env,
+                function_env,
+            ) {
                 Ok(expression) => expression,
                 Err(error) => return Err(error),
             };
-            variable_env.assign_variable(identifier, expression)
+            local_variable_env.assign_variable(identifier, expression)
         }
     }
 }
 
 fn evaluate_conditional(
     conditional: &Conditional,
-    variable_env: &mut VarEnv,
+    global_variable_env: &mut VarEnv,
+    local_variable_env: &mut VarEnv,
     function_env: &mut FuncEnv,
 ) -> Result<EvaluatedExpression, String> {
     match conditional {
-        Conditional::IfStatement(if_statement) => {
-            evaluate_if_statement(if_statement, variable_env, function_env)
-        }
+        Conditional::IfStatement(if_statement) => evaluate_if_statement(
+            if_statement,
+            global_variable_env,
+            local_variable_env,
+            function_env,
+        ),
         Conditional::ForLoop(
             initial_statement,
             exit_condition,
@@ -506,37 +587,68 @@ fn evaluate_conditional(
             exit_condition,
             continuous_expression,
             code_block,
-            variable_env,
+            global_variable_env,
+            local_variable_env,
             function_env,
         ),
-        Conditional::WhileLoop(condition, code_block) => {
-            evaluate_while_loop(condition, code_block, variable_env, function_env)
-        }
+        Conditional::WhileLoop(condition, code_block) => evaluate_while_loop(
+            condition,
+            code_block,
+            global_variable_env,
+            local_variable_env,
+            function_env,
+        ),
     }
 }
 
 fn evaluate_if_statement(
     if_statement: &Vec<(Option<Expression>, Vec<Statement>)>,
-    variable_env: &mut VarEnv,
+    global_variable_env: &mut VarEnv,
+    local_variable_env: &mut VarEnv,
     function_env: &mut FuncEnv,
 ) -> Result<EvaluatedExpression, String> {
     for (condition, code_block) in if_statement {
         if let Some(condition) = condition {
-            match evaluate_expression(condition, variable_env, function_env)? {
+            match evaluate_expression(
+                condition,
+                global_variable_env,
+                local_variable_env,
+                function_env,
+            )? {
                 EvaluatedExpression::Bool(true) => {
-                    return evaluate_code_block(code_block, variable_env, function_env)
+                    return evaluate_code_block(
+                        code_block,
+                        global_variable_env,
+                        local_variable_env,
+                        function_env,
+                    )
                 }
                 EvaluatedExpression::Int(value) if value > 0 => {
-                    return evaluate_code_block(code_block, variable_env, function_env)
+                    return evaluate_code_block(
+                        code_block,
+                        global_variable_env,
+                        local_variable_env,
+                        function_env,
+                    )
                 }
                 EvaluatedExpression::Bool(false) => continue,
                 EvaluatedExpression::Int(value) if value <= 0 => {
-                    return evaluate_code_block(code_block, variable_env, function_env)
+                    return evaluate_code_block(
+                        code_block,
+                        global_variable_env,
+                        local_variable_env,
+                        function_env,
+                    )
                 }
                 _ => return Err("Invalid condition".to_string()),
             }
         }
-        return evaluate_code_block(code_block, variable_env, function_env);
+        return evaluate_code_block(
+            code_block,
+            global_variable_env,
+            local_variable_env,
+            function_env,
+        );
     }
 
     Ok(EvaluatedExpression::Null)
@@ -547,16 +659,27 @@ fn evaluate_for_loop(
     exit_condition: &Option<Expression>,
     continuous_expression: &Option<VariableAssignment>,
     code_block: &Vec<Statement>,
-    variable_env: &mut VarEnv,
+    global_variable_env: &mut VarEnv,
+    local_variable_env: &mut VarEnv,
     function_env: &mut FuncEnv,
 ) -> Result<EvaluatedExpression, String> {
     if let Some(statement) = initial_statement {
-        evaluate_variable_assignment(statement, variable_env, function_env)?;
+        evaluate_variable_assignment(
+            statement,
+            global_variable_env,
+            local_variable_env,
+            function_env,
+        )?;
     }
 
     loop {
         if let Some(condition) = exit_condition {
-            match evaluate_expression(condition, variable_env, function_env)? {
+            match evaluate_expression(
+                condition,
+                global_variable_env,
+                local_variable_env,
+                function_env,
+            )? {
                 EvaluatedExpression::Bool(true) => (),
                 EvaluatedExpression::Bool(false) => return Ok(EvaluatedExpression::Null),
                 EvaluatedExpression::Int(value) if value > 0 => (),
@@ -567,7 +690,12 @@ fn evaluate_for_loop(
             }
         }
 
-        match evaluate_code_block(code_block, variable_env, function_env)? {
+        match evaluate_code_block(
+            code_block,
+            global_variable_env,
+            local_variable_env,
+            function_env,
+        )? {
             EvaluatedExpression::ReturnValue(value) => {
                 return Ok(EvaluatedExpression::ReturnValue(value))
             }
@@ -577,7 +705,12 @@ fn evaluate_for_loop(
         }
 
         if let Some(statement) = continuous_expression {
-            evaluate_variable_assignment(statement, variable_env, function_env)?;
+            evaluate_variable_assignment(
+                statement,
+                global_variable_env,
+                local_variable_env,
+                function_env,
+            )?;
         }
     }
 }
@@ -585,11 +718,17 @@ fn evaluate_for_loop(
 fn evaluate_while_loop(
     condition: &Expression,
     code_block: &Vec<Statement>,
-    variable_env: &mut VarEnv,
+    global_variable_env: &mut VarEnv,
+    local_variable_env: &mut VarEnv,
     function_env: &mut FuncEnv,
 ) -> Result<EvaluatedExpression, String> {
     loop {
-        match evaluate_expression(condition, variable_env, function_env)? {
+        match evaluate_expression(
+            condition,
+            global_variable_env,
+            local_variable_env,
+            function_env,
+        )? {
             EvaluatedExpression::Bool(true) => (),
             EvaluatedExpression::Bool(false) => return Ok(EvaluatedExpression::Null),
             EvaluatedExpression::Int(value) if value > 0 => (),
@@ -598,7 +737,12 @@ fn evaluate_while_loop(
             _ => return Err("Invalid exit condition".to_string()),
         }
 
-        match evaluate_code_block(code_block, variable_env, function_env) {
+        match evaluate_code_block(
+            code_block,
+            global_variable_env,
+            local_variable_env,
+            function_env,
+        ) {
             Ok(EvaluatedExpression::ReturnValue(return_value)) => {
                 return Ok(EvaluatedExpression::ReturnValue(return_value));
             }
@@ -612,32 +756,59 @@ fn evaluate_while_loop(
 
 pub fn evaluate_expression(
     expression: &Expression,
-    variable_env: &mut VarEnv,
+    global_variable_env: &mut VarEnv,
+    local_variable_env: &mut VarEnv,
     function_env: &mut FuncEnv,
 ) -> Result<EvaluatedExpression, String> {
     match expression {
-        Expression::Unary(operator, right) => {
-            evaluate_unary_expression(operator, right, variable_env, function_env)
-        }
-        Expression::Binary(left, operator, right) => {
-            evaluate_binary_expression(left, operator, right, variable_env, function_env)
-        }
+        Expression::Unary(operator, right) => evaluate_unary_expression(
+            operator,
+            right,
+            global_variable_env,
+            local_variable_env,
+            function_env,
+        ),
+        Expression::Binary(left, operator, right) => evaluate_binary_expression(
+            left,
+            operator,
+            right,
+            global_variable_env,
+            local_variable_env,
+            function_env,
+        ),
         Expression::Literal(literal) => Ok(evaluate_literal(literal)),
-        Expression::Variable(identifier) => variable_env.get_variable(identifier),
-        Expression::FunctionCall(identifier, arguements) => {
-            evaluate_function_call(identifier, arguements, variable_env, function_env)
-        }
-        Expression::Grouping(group) => evaluate_expression(&*group, variable_env, function_env),
+        Expression::Variable(identifier) => match local_variable_env.get_variable(identifier) {
+            Ok(value) => Ok(value),
+            Err(_) => match global_variable_env.get_variable(identifier) {
+                Ok(value) => Ok(value),
+                Err(_) => Err(format!("Variable {:?} not recognised", identifier)),
+            },
+        },
+        Expression::FunctionCall(identifier, arguements) => evaluate_function_call(
+            identifier,
+            arguements,
+            global_variable_env,
+            local_variable_env,
+            function_env,
+        ),
+        Expression::Grouping(group) => evaluate_expression(
+            &*group,
+            global_variable_env,
+            local_variable_env,
+            function_env,
+        ),
     }
 }
 
 fn evaluate_unary_expression(
     operator: &UnaryOperator,
     right: &Box<Expression>,
-    variable_env: &mut VarEnv,
+    global_variable_env: &mut VarEnv,
+    local_variable_env: &mut VarEnv,
     function_env: &mut FuncEnv,
 ) -> Result<EvaluatedExpression, String> {
-    let expression = evaluate_expression(right, variable_env, function_env)?;
+    let expression =
+        evaluate_expression(right, global_variable_env, local_variable_env, function_env)?;
     match operator {
         UnaryOperator::Negation => expression.negate(),
         UnaryOperator::LogicalNegation => expression.logical_negate(),
@@ -649,11 +820,12 @@ fn evaluate_binary_expression(
     left: &Box<Expression>,
     operator: &BinaryOperator,
     right: &Box<Expression>,
-    variable_env: &mut VarEnv,
+    global_variable_env: &mut VarEnv,
+    local_variable_env: &mut VarEnv,
     function_env: &mut FuncEnv,
 ) -> Result<EvaluatedExpression, String> {
-    let left = evaluate_expression(left, variable_env, function_env)?;
-    let right = evaluate_expression(right, variable_env, function_env)?;
+    let left = evaluate_expression(left, global_variable_env, local_variable_env, function_env)?;
+    let right = evaluate_expression(right, global_variable_env, local_variable_env, function_env)?;
 
     match operator {
         BinaryOperator::Add => left.add(right),

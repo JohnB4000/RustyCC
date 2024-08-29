@@ -208,8 +208,10 @@ fn generate_preamble(
 
     let mut global_variables_list = Vec::new();
 
-    let mut variable_env = VarEnv::new();
-    variable_env.add_env();
+    let mut global_variable_env = VarEnv::new();
+    global_variable_env.add_env();
+    let mut local_variable_env = VarEnv::new();
+    local_variable_env.add_env();
     let mut function_env = FuncEnv::new();
 
     for variable in global_variables {
@@ -225,13 +227,14 @@ fn generate_preamble(
                     Some(expression) => {
                         let final_value = match evaluate_expression(
                             &expression,
-                            &mut variable_env,
+                            &mut global_variable_env,
+                            &mut local_variable_env,
                             &mut function_env,
                         ) {
                             Ok(value) => value,
                             Err(error) => return Err(format!("Encountered error during evaluation of gloabal variable expression: {:?}", error))
                         };
-                        variable_env.define_variable(&identifier, Some(final_value));
+                        global_variable_env.define_variable(&identifier, Some(final_value));
 
                         let final_value = 2;
                         data_section
