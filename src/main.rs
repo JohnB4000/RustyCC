@@ -6,7 +6,6 @@ use std::{
 
 use clap::{ArgGroup, Parser};
 
-#[allow(unused)]
 mod code_generator;
 mod interpreter;
 mod lexer;

@@ -111,7 +111,7 @@ struct LabelTracker {
 
 impl LabelTracker {
     fn new() -> Self {
-        let mut label_tracker = LabelTracker {
+        let label_tracker = LabelTracker {
             current_label: Vec::new(),
         };
 
@@ -158,7 +158,7 @@ pub fn generate_code(ast: Vec<TopLevel>) -> Result<(), String> {
 
 fn write_vector(file: &mut BufWriter<File>, vector: Vec<&[u8]>) {
     for line in vector {
-        file.write_all(line);
+        let _ = file.write_all(line);
     }
 }
 
@@ -234,7 +234,7 @@ fn generate_preamble(
                             Ok(value) => value,
                             Err(error) => return Err(format!("Encountered error during evaluation of gloabal variable expression: {:?}", error))
                         };
-                        global_variable_env.define_variable(&identifier, Some(final_value));
+                        let _ = global_variable_env.define_variable(&identifier, Some(final_value));
 
                         let final_value = 2;
                         data_section
@@ -248,9 +248,9 @@ fn generate_preamble(
     }
 
     write_vector(file, data_section.iter().map(|s| s.as_bytes()).collect());
-    file.write_all("\n".as_bytes());
+    let _ = file.write_all("\n".as_bytes());
     write_vector(file, bss_section.iter().map(|s| s.as_bytes()).collect());
-    file.write_all("\n".as_bytes());
+    let _ = file.write_all("\n".as_bytes());
     write_vector(file, text_section.iter().map(|s| s.as_bytes()).collect());
 
     Ok(global_variables_list)
@@ -266,19 +266,16 @@ fn generate_code_from_ast(
 
     for top_level in ast {
         match top_level {
-            TopLevel::Function(return_type, identifier, parameters, code_block) => {
-                generate_function(
-                    file,
-                    &mut register_tracker,
-                    &mut label_tracker,
-                    global_variables,
-                    &return_type,
-                    &identifier,
-                    &parameters,
-                    &code_block,
-                )?
-            }
-            TopLevel::VariableDefinition(variable_type, identifier, value) => {
+            TopLevel::Function(_, identifier, parameters, code_block) => generate_function(
+                file,
+                &mut register_tracker,
+                &mut label_tracker,
+                global_variables,
+                &identifier,
+                &parameters,
+                &code_block,
+            )?,
+            TopLevel::VariableDefinition(_, _, _) => {
                 return Err(
                     "Error found gloabal variable definition in list of function definitions"
                         .to_string(),
@@ -294,7 +291,6 @@ fn generate_function(
     register_tracker: &mut RegisterTracker,
     label_tracker: &mut LabelTracker,
     global_variables: &mut Vec<String>,
-    return_type: &ASTType,
     identifier: &String,
     parameters: &Option<Vec<(ASTType, String)>>,
     code_block: &Vec<Statement>,
@@ -303,7 +299,7 @@ fn generate_function(
 
     let mut symbols_table = LocalSymbolsTable::new();
 
-    file.write_all(format!("\n{}:\n", identifier).as_bytes());
+    let _ = file.write_all(format!("\n{}:\n", identifier).as_bytes());
 
     if identifier != "main" {
         write_vector(
@@ -317,12 +313,12 @@ fn generate_function(
             ],
         );
     } else {
-        file.write_all("\tpush rbp\n".as_bytes());
+        let _ = file.write_all("\tpush rbp\n".as_bytes());
     }
 
-    file.write_all("\tmov rbp, rsp\n\n".as_bytes());
+    let _ = file.write_all("\tmov rbp, rsp\n\n".as_bytes());
     if local_variable_size > 0 {
-        file.write_all(format!("\tsub rsp, {}\n\n", local_variable_size).as_bytes());
+        let _ = file.write_all(format!("\tsub rsp, {}\n\n", local_variable_size).as_bytes());
     }
 
     let parameter_registers = vec!["edi", "esi", "edx", "ecx"];
@@ -342,7 +338,7 @@ fn generate_function(
                 None => return Err(format!("Unknown variable {:?}", identifier)),
             };
 
-            file.write_all(
+            let _ = file.write_all(
                 format!("\tmov [{}], {}\n\n", pointer, parameter_registers[index]).as_bytes(),
             );
         }
@@ -358,9 +354,9 @@ fn generate_function(
         code_block,
         None,
         None,
-    );
+    )?;
 
-    file.write_all("\n\tmov rsp, rbp\n\n".as_bytes());
+    let _ = file.write_all("\n\tmov rsp, rbp\n\n".as_bytes());
     if identifier != "main" {
         write_vector(
             file,
@@ -402,9 +398,7 @@ fn calc_stack_size(
     }
 
     if let Some(Some(parameters)) = parameters {
-        for parameter in parameters {
-            total += 4;
-        }
+        total += 4 * parameters.len() as i32;
     }
 
     total
@@ -477,38 +471,17 @@ fn generate_code_block(
                 in_main,
                 expression,
             )?,
-            Statement::Break => generate_break(
-                file,
-                register_tracker,
-                label_tracker,
-                global_variables,
-                symbols_table,
-                break_label,
-            )?,
-            Statement::Continue => generate_continue(
-                file,
-                register_tracker,
-                label_tracker,
-                global_variables,
-                symbols_table,
-                continue_label,
-            )?,
+            Statement::Break => generate_break(file, break_label)?,
+            Statement::Continue => generate_continue(file, continue_label)?,
         }
     }
     Ok(())
 }
 
-fn generate_break(
-    file: &mut BufWriter<File>,
-    register_tracker: &mut RegisterTracker,
-    label_tracker: &mut LabelTracker,
-    global_variables: &[String],
-    symbols_table: &mut LocalSymbolsTable,
-    break_label: Option<&String>,
-) -> Result<(), String> {
+fn generate_break(file: &mut BufWriter<File>, break_label: Option<&String>) -> Result<(), String> {
     match break_label {
         Some(label) => {
-            file.write_all(format!("\tjmp .{}\n", label).as_bytes());
+            let _ = file.write_all(format!("\tjmp .{}\n", label).as_bytes());
             Ok(())
         }
         None => Err(format!("Invalid break statement, not in a loop")),
@@ -517,18 +490,14 @@ fn generate_break(
 
 fn generate_continue(
     file: &mut BufWriter<File>,
-    register_tracker: &mut RegisterTracker,
-    label_tracker: &mut LabelTracker,
-    global_variables: &[String],
-    symbols_table: &mut LocalSymbolsTable,
     continue_label: Option<&String>,
 ) -> Result<(), String> {
     match continue_label {
         Some(label) => {
-            file.write_all(format!("\tjmp .{}\n", label).as_bytes());
+            let _ = file.write_all(format!("\tjmp .{}\n", label).as_bytes());
             Ok(())
         }
-        None => Err(format!("Invalid break statement, not in a loop")),
+        None => Err(format!("Invalid continue statement, not in a loop")),
     }
 }
 
@@ -580,10 +549,10 @@ fn generate_function_call(
         }
 
         if identifier == "printf" {
-            file.write_all("\tmov edi, int_format\n".as_bytes());
+            let _ = file.write_all("\tmov edi, int_format\n".as_bytes());
         }
         for index in 0..arguements.len() {
-            file.write_all(
+            let _ = file.write_all(
                 format!(
                     "\tmov {}, [rbp-{}]\n",
                     arguement_registers[if identifier == "printf" {
@@ -599,7 +568,7 @@ fn generate_function_call(
     }
 
     symbols_table.increase_pointer(parameter_size);
-    file.write_all(format!("\tadd rsp, {}\n", parameter_size).as_bytes());
+    let _ = file.write_all(format!("\tadd rsp, {}\n", parameter_size).as_bytes());
 
     write_vector(
         file,
@@ -700,7 +669,7 @@ fn generate_variable_assignment(
         }
     };
 
-    file.write_all(
+    let _ = file.write_all(
         format!(
             "\tmov [{}], {}\n\n",
             pointer,
@@ -777,14 +746,14 @@ fn generate_if_statement(
     break_label: Option<&String>,
 ) -> Result<(), String> {
     let mut labels = Vec::new();
-    for index in 0..if_statement.len() {
+    for _ in 0..if_statement.len() {
         labels.push(label_tracker.add_label());
     }
     labels.push(label_tracker.add_label());
 
     for index in 0..if_statement.len() {
         let (expression, code_block) = &if_statement[index];
-        file.write_all(format!(".{}:\n", labels[index]).as_bytes());
+        let _ = file.write_all(format!(".{}:\n", labels[index]).as_bytes());
 
         if let Some(expression) = expression {
             let register_index = generate_expression(
@@ -819,11 +788,11 @@ fn generate_if_statement(
             code_block,
             continue_label,
             break_label,
-        );
+        )?;
 
-        file.write_all(format!("\tjmp .{}\n", labels.last().unwrap()).as_bytes());
+        let _ = file.write_all(format!("\tjmp .{}\n", labels.last().unwrap()).as_bytes());
     }
-    file.write_all(format!(".{}:\n", labels.last().unwrap()).as_bytes());
+    let _ = file.write_all(format!(".{}:\n", labels.last().unwrap()).as_bytes());
     Ok(())
 }
 
@@ -851,10 +820,10 @@ fn generate_for_loop(
             global_variables,
             symbols_table,
             initial_statement,
-        );
+        )?;
     }
 
-    file.write_all(format!(".{}:\n", start_label).as_bytes());
+    let _ = file.write_all(format!(".{}:\n", start_label).as_bytes());
 
     if let Some(exit_condition) = exit_condition {
         let register_index = generate_expression(
@@ -890,9 +859,9 @@ fn generate_for_loop(
         code_block,
         Some(&continue_label),
         Some(&end_label),
-    );
+    )?;
 
-    file.write_all(format!(".{}:\n", continue_label).as_bytes());
+    let _ = file.write_all(format!(".{}:\n", continue_label).as_bytes());
 
     if let Some(continuous_expression) = continuous_expression {
         generate_variable_definition_assignment(
@@ -902,7 +871,7 @@ fn generate_for_loop(
             global_variables,
             symbols_table,
             continuous_expression,
-        );
+        )?;
     }
 
     write_vector(
@@ -928,7 +897,7 @@ fn generate_while_loop(
     let start_label = label_tracker.add_label();
     let end_label = label_tracker.add_label();
 
-    file.write_all(format!(".{}:\n", start_label).as_bytes());
+    let _ = file.write_all(format!(".{}:\n", start_label).as_bytes());
 
     let register_index = generate_expression(
         file,
@@ -962,7 +931,7 @@ fn generate_while_loop(
         code_block,
         Some(&start_label),
         Some(&end_label),
-    );
+    )?;
 
     write_vector(
         file,
@@ -992,7 +961,7 @@ fn generate_return(
         expression,
     )?;
 
-    file.write_all(
+    let _ = file.write_all(
         format!(
             "\tmov eax, {}\n",
             register_tracker.loopup_register(register_index)
@@ -1000,7 +969,7 @@ fn generate_return(
         .as_bytes(),
     );
 
-    file.write_all("\n\tmov rsp, rbp\n\n".as_bytes());
+    let _ = file.write_all("\n\tmov rsp, rbp\n\n".as_bytes());
     if !in_main {
         write_vector(
             file,
@@ -1044,9 +1013,7 @@ fn generate_expression(
             operator,
             right,
         ),
-        Expression::Literal(literal) => {
-            generate_literal(file, register_tracker, symbols_table, literal)
-        }
+        Expression::Literal(literal) => generate_literal(file, register_tracker, literal),
         Expression::Variable(identifier) => load_variable(
             file,
             register_tracker,
@@ -1055,7 +1022,7 @@ fn generate_expression(
             identifier,
         ),
         Expression::FunctionCall(identifier, arguements) => {
-            generate_function_call(
+            let _ = generate_function_call(
                 file,
                 register_tracker,
                 label_tracker,
@@ -1067,7 +1034,7 @@ fn generate_expression(
 
             let register_index = register_tracker.claim_register()?;
 
-            file.write_all(
+            let _ = file.write_all(
                 format!(
                     "\tmov {}, eax\n",
                     register_tracker.loopup_register(register_index)
@@ -1106,7 +1073,7 @@ fn generate_unary_expression(
     )?;
     match operator {
         UnaryOperator::Negation => {
-            file.write_all(
+            let _ = file.write_all(
                 format!(
                     "\tneg {}\n",
                     register_tracker.loopup_register(register_index)
@@ -1132,7 +1099,7 @@ fn generate_unary_expression(
             ],
         ),
         UnaryOperator::BitwiseNot => {
-            file.write_all(
+            let _ = file.write_all(
                 format!(
                     "\tnot {}\n",
                     register_tracker.loopup_register(register_index)
@@ -1173,7 +1140,7 @@ fn generate_binary_expression(
 
     match operator {
         BinaryOperator::Add => {
-            file.write_all(
+            let _ = file.write_all(
                 format!(
                     "\tadd {}, {}\n",
                     register_tracker.loopup_register(left_index),
@@ -1185,7 +1152,7 @@ fn generate_binary_expression(
             Ok(left_index)
         }
         BinaryOperator::Sub => {
-            file.write_all(
+            let _ = file.write_all(
                 format!(
                     "\tsub {}, {}\n",
                     register_tracker.loopup_register(left_index),
@@ -1423,7 +1390,7 @@ fn generate_binary_expression(
             Ok(left_index)
         }
         BinaryOperator::BitwiseAnd => {
-            file.write_all(
+            let _ = file.write_all(
                 format!(
                     "\tand {}, {}\n",
                     register_tracker.loopup_register(left_index),
@@ -1435,7 +1402,7 @@ fn generate_binary_expression(
             Ok(left_index)
         }
         BinaryOperator::BitwiseOr => {
-            file.write_all(
+            let _ = file.write_all(
                 format!(
                     "\tor {}, {}\n",
                     register_tracker.loopup_register(left_index),
@@ -1452,7 +1419,6 @@ fn generate_binary_expression(
 fn generate_literal(
     file: &mut BufWriter<File>,
     register_tracker: &mut RegisterTracker,
-    symbols_table: &mut LocalSymbolsTable,
     literal: &ASTLiteral,
 ) -> Result<usize, String> {
     match literal {
@@ -1481,7 +1447,7 @@ fn load_variable(
         }
     };
 
-    file.write_all(
+    let _ = file.write_all(
         format!(
             "\tmov {}, [{}]\n",
             register_tracker.loopup_register(register_index),
@@ -1499,7 +1465,7 @@ fn generate_load_int_literal(
 ) -> Result<usize, String> {
     let register_index = register_tracker.claim_register()?;
 
-    file.write_all(
+    let _ = file.write_all(
         format!(
             "\tmov {}, {}\n",
             register_tracker.loopup_register(register_index),
